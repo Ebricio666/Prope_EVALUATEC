@@ -114,7 +114,7 @@ def limpiar_nombre_carrera(valor):
 
 
 def encontrar_columna(df, posibles_nombres):
-    """Encuentra columnas ignorando acentos, espacios y mayúsculas."""
+    """Encuentra una columna ignorando acentos, espacios y mayúsculas."""
 
     columnas_normalizadas = {
         normalizar_texto(columna): columna
@@ -138,7 +138,7 @@ def encontrar_columna(df, posibles_nombres):
 
 
 def leer_csv_archivo(archivo):
-    """Lee archivos CSV intentando codificaciones y separadores frecuentes."""
+    """Lee archivos CSV probando codificaciones y separadores comunes."""
 
     contenido = archivo.getvalue()
 
@@ -177,7 +177,7 @@ def leer_csv_archivo(archivo):
 
 
 def identificar_bloque_archivo(nombre_archivo):
-    """Identifica ADM, ARQ o ING según el nombre del archivo."""
+    """Identifica ADM, ARQ o ING desde el nombre del archivo."""
 
     nombre = normalizar_texto(nombre_archivo)
 
@@ -194,7 +194,7 @@ def identificar_bloque_archivo(nombre_archivo):
 
 
 def clasificar_inicio(valor):
-    """Clasifica si la persona inició la evaluación."""
+    """Clasifica si el aspirante inició la evaluación."""
 
     if pd.isna(valor):
         return "No inició"
@@ -226,7 +226,7 @@ def clasificar_inicio(valor):
 
 
 def convertir_porcentaje(valor):
-    """Convierte datos a una escala de 0 a 100."""
+    """Convierte valores a una escala de 0 a 100."""
 
     if pd.isna(valor):
         return np.nan
@@ -274,7 +274,7 @@ def hex_a_rgba(color_hex, alpha=0.15):
 
 def detectar_columnas_areas(df):
     """
-    Detecta columnas como:
+    Detecta columnas similares a:
     AreaGRALSeccionINGPorcentajeCorrectas
     AreaGRALSeccionMATPorcentajeCorrectas
     """
@@ -323,13 +323,11 @@ def detectar_columnas_areas(df):
 # ============================================================
 
 def procesar_archivo(archivo):
-    """Lee y prepara un archivo de EVALUATEC."""
+    """Lee y prepara un archivo de resultados EVALUATEC."""
 
     df = leer_csv_archivo(archivo)
 
-    bloque = identificar_bloque_archivo(
-        archivo.name
-    )
+    bloque = identificar_bloque_archivo(archivo.name)
 
     if bloque is None:
         raise ValueError(
@@ -408,7 +406,7 @@ def procesar_archivo(archivo):
 # ============================================================
 
 def clasificar_nivel_desempeno(valor):
-    """Clasifica una calificación real en rangos de desempeño."""
+    """Clasifica una calificación real en los cuatro rangos."""
 
     if pd.isna(valor):
         return None
@@ -429,7 +427,7 @@ def clasificar_nivel_desempeno(valor):
 
 
 def crear_promedio_dimensiones(df, areas_detectadas):
-    """Calcula promedio por dimensión para una selección de aspirantes."""
+    """Calcula el promedio obtenido en cada dimensión."""
 
     df_iniciaron = df[
         df["Estatus_inicio"] == "Inició"
@@ -460,10 +458,10 @@ def crear_promedio_dimensiones(df, areas_detectadas):
     return pd.DataFrame(resultados)
 
 
-def crear_matriz_rangos_dimension(df, areas_detectadas):
+def crear_distribucion_por_dimension(df, areas_detectadas):
     """
-    Crea una matriz con porcentaje de aspirantes por rango real
-    de calificación dentro de cada dimensión.
+    Calcula la distribución de aspirantes por rango de calificación
+    en cada dimensión.
     """
 
     df_iniciaron = df[
@@ -478,17 +476,10 @@ def crear_matriz_rangos_dimension(df, areas_detectadas):
         if columna not in df_iniciaron.columns:
             continue
 
-        valores = df_iniciaron[
-            columna
-        ].dropna()
+        valores = df_iniciaron[columna].dropna()
 
         if valores.empty:
             continue
-
-        dimension = ETIQUETAS_AREAS.get(
-            codigo,
-            codigo
-        )
 
         total = len(valores)
 
@@ -505,9 +496,11 @@ def crear_matriz_rangos_dimension(df, areas_detectadas):
             registros.append(
                 {
                     "Código": codigo,
-                    "Dimensión": dimension,
+                    "Dimensión": ETIQUETAS_AREAS.get(
+                        codigo,
+                        codigo
+                    ),
                     "Nivel": nivel,
-                    "Rango": RANGOS_NIVELES[nivel],
                     "Aspirantes": cantidad,
                     "Total": total,
                     "Porcentaje": porcentaje
@@ -535,31 +528,32 @@ def crear_matriz_rangos_dimension(df, areas_detectadas):
         how="left"
     )
 
-    orden_dimensiones = (
-        tabla[
-            [
-                "Dimensión",
-                "Promedio"
-            ]
-        ]
-        .drop_duplicates()
-        .sort_values(
-            "Promedio",
-            ascending=True
-        )["Dimensión"]
-        .tolist()
-    )
+    orden_codigo = {
+        codigo: indice
+        for indice, codigo in enumerate(ORDEN_AREAS)
+    }
 
-    tabla["Dimensión"] = pd.Categorical(
-        tabla["Dimensión"],
-        categories=orden_dimensiones,
-        ordered=True
+    tabla["Orden"] = tabla["Código"].map(
+        orden_codigo
+    ).fillna(999)
+
+    tabla = tabla.sort_values(
+        [
+            "Orden",
+            "Nivel"
+        ]
     )
 
     tabla["Nivel"] = pd.Categorical(
         tabla["Nivel"],
         categories=ORDEN_NIVELES,
         ordered=True
+    )
+
+    tabla["Etiqueta"] = tabla["Porcentaje"].apply(
+        lambda valor: f"{valor:.0f}%"
+        if valor >= 8
+        else ""
     )
 
     return tabla
@@ -571,15 +565,10 @@ def crear_diagnostico_carrera(
     areas_detectadas,
     carrera_seleccionada
 ):
-    """Genera lectura breve para coordinación."""
+    """Genera una lectura ejecutiva breve para coordinación."""
 
     promedio_carrera = crear_promedio_dimensiones(
         df_carrera,
-        areas_detectadas
-    )
-
-    promedio_bloque = crear_promedio_dimensiones(
-        df_bloque,
         areas_detectadas
     )
 
@@ -591,8 +580,8 @@ def crear_diagnostico_carrera(
         ascending=True
     ).reset_index(drop=True)
 
-    areas_prioritarias = ranking.head(2)
-    area_fuerte = ranking.iloc[-1]
+    prioridades = ranking.head(2)
+    fortaleza = ranking.iloc[-1]
 
     promedio_global_carrera = df_carrera[
         (
@@ -602,7 +591,9 @@ def crear_diagnostico_carrera(
         (
             df_carrera["Promedio_global_individual"].notna()
         )
-    ]["Promedio_global_individual"].mean()
+    ][
+        "Promedio_global_individual"
+    ].mean()
 
     promedio_global_bloque = df_bloque[
         (
@@ -612,42 +603,36 @@ def crear_diagnostico_carrera(
         (
             df_bloque["Promedio_global_individual"].notna()
         )
-    ]["Promedio_global_individual"].mean()
+    ][
+        "Promedio_global_individual"
+    ].mean()
 
-    prioridades = ", ".join(
+    diferencia = promedio_global_carrera - promedio_global_bloque
+
+    if diferencia >= 0:
+        comparacion = f"{diferencia:.1f} puntos por encima"
+    else:
+        comparacion = f"{abs(diferencia):.1f} puntos por debajo"
+
+    texto_prioridades = ", ".join(
         [
-            (
-                f"{fila['Dimensión']} "
-                f"({fila['Promedio']:.1f}%)"
-            )
-            for _, fila in areas_prioritarias.iterrows()
+            f"{fila['Dimensión']} ({fila['Promedio']:.1f}%)"
+            for _, fila in prioridades.iterrows()
         ]
     )
 
-    diferencia = (
-        promedio_global_carrera
-        - promedio_global_bloque
-    )
-
-    if diferencia >= 0:
-        comparacion = (
-            f"{diferencia:.1f} puntos por encima"
-        )
-    else:
-        comparacion = (
-            f"{abs(diferencia):.1f} puntos por debajo"
-        )
+    bloque = df_bloque["Bloque"].iloc[0]
 
     return (
         f"**{carrera_seleccionada}** presenta un promedio global de "
-        f"**{promedio_global_carrera:.1f}%**, equivalente a "
-        f"**{comparacion}** del promedio general de "
-        f"**{BLOQUES[df_bloque['Bloque'].iloc[0]]}**. "
+        f"**{promedio_global_carrera:.1f}%**, "
+        f"{comparacion} del promedio general de "
+        f"**{BLOQUES[bloque]}**. "
         f"Las principales áreas de fortalecimiento son "
-        f"**{prioridades}**. "
+        f"**{texto_prioridades}**. "
         f"La dimensión con mejor resultado es "
-        f"**{area_fuerte['Dimensión']}** "
-        f"({area_fuerte['Promedio']:.1f}%)."
+        f"**{fortaleza['Dimensión']}** "
+        f"({fortaleza['Promedio']:.1f}%)."
     )
 
 
@@ -663,8 +648,8 @@ def mostrar_radar_carrera(
     nombre_bloque
 ):
     """
-    Muestra carrera seleccionada contra el promedio del archivo.
-    Las dos dimensiones más bajas se resaltan en rojo.
+    Compara el perfil de la carrera contra el promedio del archivo.
+    Marca en rojo las dos dimensiones más bajas de la carrera.
     """
 
     promedio_carrera = crear_promedio_dimensiones(
@@ -706,7 +691,9 @@ def mostrar_radar_carrera(
             valores_bloque.append(0)
         else:
             valores_bloque.append(
-                float(fila_bloque["Promedio"].iloc[0])
+                float(
+                    fila_bloque["Promedio"].iloc[0]
+                )
             )
 
     ranking_bajo = promedio_carrera.sort_values(
@@ -743,7 +730,7 @@ def mostrar_radar_carrera(
                 size=6
             ),
             hovertemplate=(
-                "<b>Promedio del bloque</b><br>"
+                "<b>Promedio del archivo</b><br>"
                 "%{theta}: %{r:.1f}%"
                 "<extra></extra>"
             )
@@ -837,8 +824,7 @@ def mostrar_radar_carrera(
     with col_prioridades:
         st.markdown("### 🔴 Áreas prioritarias")
         st.caption(
-            "Las dos dimensiones con menor promedio "
-            "en la carrera seleccionada."
+            "Dimensiones con menor promedio en la carrera."
         )
 
         for _, fila in ranking_bajo.iterrows():
@@ -849,38 +835,66 @@ def mostrar_radar_carrera(
 
         st.markdown("---")
 
-        st.markdown("**Cómo leer el radar**")
         st.caption(
-            f"Línea gris punteada: promedio de {nombre_bloque}. "
-            "Puntos rojos: áreas prioritarias."
+            f"Línea gris: promedio de {nombre_bloque}. "
+            "Puntos rojos: dimensiones prioritarias."
         )
 
 
-def mostrar_matriz_rangos_dimension(
+def mostrar_barras_distribucion_dimension(
     df_carrera,
     areas_detectadas,
     carrera_seleccionada
 ):
     """
-    Muestra matriz de distribución por rangos REALES de calificación.
+    Muestra barras verticales apiladas.
 
-    Las columnas son rangos de puntaje real, no porcentajes acumulados.
+    Eje izquierdo:
+    Distribución de aspirantes en cada rango.
+
+    Eje derecho:
+    Promedio real de calificación por dimensión,
+    indicado con un punto negro.
     """
 
-    tabla = crear_matriz_rangos_dimension(
+    tabla = crear_distribucion_por_dimension(
         df_carrera,
         areas_detectadas
     )
 
     if tabla.empty:
         st.info(
-            "No hay información suficiente para generar la matriz."
+            "No hay información suficiente para generar la gráfica."
         )
         return
 
-    dimensiones = list(
-        tabla["Dimensión"]
-        .cat.categories
+    dimensiones = (
+        tabla[
+            [
+                "Código",
+                "Dimensión",
+                "Orden"
+            ]
+        ]
+        .drop_duplicates()
+        .sort_values("Orden")
+    )
+
+    nombres_dimensiones = dimensiones[
+        "Dimensión"
+    ].tolist()
+
+    promedios = (
+        tabla[
+            [
+                "Dimensión",
+                "Promedio"
+            ]
+        ]
+        .drop_duplicates()
+        .set_index("Dimensión")
+        .reindex(nombres_dimensiones)
+        .reset_index()
     )
 
     fig = go.Figure()
@@ -890,45 +904,22 @@ def mostrar_matriz_rangos_dimension(
             tabla["Nivel"] == nivel
         ].copy()
 
-        datos_nivel = datos_nivel.set_index(
-            "Dimensión"
-        ).reindex(
-            dimensiones
-        ).reset_index()
-
-        textos = []
-
-        for _, fila in datos_nivel.iterrows():
-            textos.append(
-                (
-                    f"{fila['Porcentaje']:.0f}%"
-                    f"<br><span style='font-size:11px'>"
-                    f"n={int(fila['Aspirantes'])}</span>"
-                )
-            )
+        datos_nivel = (
+            datos_nivel
+            .set_index("Dimensión")
+            .reindex(nombres_dimensiones)
+            .reset_index()
+        )
 
         fig.add_trace(
-            go.Scatter(
-                x=[RANGOS_NIVELES[nivel]] * len(dimensiones),
-                y=dimensiones,
-                mode="markers+text",
-                text=textos,
-                textposition="middle center",
-                textfont=dict(
-                    size=13,
-                    color="white"
-                    if nivel in ["Bajo", "Alto"]
-                    else "#1F2937"
-                ),
-                marker=dict(
-                    symbol="square",
-                    size=95,
-                    color=COLORES_NIVELES[nivel],
-                    line=dict(
-                        color="white",
-                        width=2
-                    )
-                ),
+            go.Bar(
+                x=datos_nivel["Dimensión"],
+                y=datos_nivel["Porcentaje"],
+                name=f"{nivel} · {RANGOS_NIVELES[nivel]}",
+                marker_color=COLORES_NIVELES[nivel],
+                text=datos_nivel["Etiqueta"],
+                textposition="inside",
+                insidetextanchor="middle",
                 customdata=np.column_stack(
                     [
                         datos_nivel["Aspirantes"],
@@ -937,47 +928,82 @@ def mostrar_matriz_rangos_dimension(
                     ]
                 ),
                 hovertemplate=(
-                    "<b>%{y}</b><br>"
-                    f"<b>Rango real:</b> {RANGOS_NIVELES[nivel]}<br>"
+                    "<b>%{x}</b><br>"
+                    f"<b>Rango de calificación:</b> "
+                    f"{RANGOS_NIVELES[nivel]}<br>"
                     "<b>Aspirantes:</b> %{customdata[0]} de %{customdata[1]}<br>"
-                    "<b>Porcentaje dentro de la dimensión:</b> "
-                    "%{customdata[2]:.1f}%"
+                    "<b>Distribución:</b> %{customdata[2]:.1f}%"
                     "<extra></extra>"
-                ),
-                name=f"{nivel} · {RANGOS_NIVELES[nivel]}",
-                showlegend=False
+                )
             )
         )
 
-    numero_dimensiones = len(dimensiones)
+    fig.add_trace(
+        go.Scatter(
+            x=promedios["Dimensión"],
+            y=promedios["Promedio"],
+            yaxis="y2",
+            mode="markers+text",
+            name="Promedio real obtenido",
+            text=[
+                f"{valor:.1f}%"
+                for valor in promedios["Promedio"]
+            ],
+            textposition="top center",
+            marker=dict(
+                color="#111111",
+                size=11,
+                symbol="diamond",
+                line=dict(
+                    color="white",
+                    width=1.5
+                )
+            ),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                "<b>Promedio real obtenido:</b> %{y:.1f}%"
+                "<extra></extra>"
+            )
+        )
+    )
 
     fig.update_layout(
         title=(
-            "Distribución por rangos reales de calificación · "
+            "Distribución de resultados y promedio real por dimensión · "
             f"{carrera_seleccionada}"
         ),
+        barmode="stack",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.12,
+            xanchor="center",
+            x=0.5
+        ),
         xaxis=dict(
-            title="Rangos reales de calificación",
+            title="Dimensiones",
             categoryorder="array",
-            categoryarray=[
-                RANGOS_NIVELES[nivel]
-                for nivel in ORDEN_NIVELES
-            ]
+            categoryarray=nombres_dimensiones
         ),
         yaxis=dict(
-            title="",
-            categoryorder="array",
-            categoryarray=dimensiones[::-1]
+            title="Distribución de aspirantes",
+            range=[0, 100],
+            ticksuffix="%"
         ),
-        height=max(
-            440,
-            numero_dimensiones * 95 + 150
+        yaxis2=dict(
+            title="Promedio de calificación obtenida",
+            overlaying="y",
+            side="right",
+            range=[0, 100],
+            ticksuffix="%",
+            showgrid=False
         ),
+        height=620,
         margin=dict(
-            t=90,
-            b=60,
-            l=260,
-            r=60
+            t=115,
+            b=80,
+            l=65,
+            r=75
         )
     )
 
@@ -987,9 +1013,9 @@ def mostrar_matriz_rangos_dimension(
     )
 
     st.caption(
-        "Cada celda muestra el porcentaje y número de aspirantes "
-        "que obtuvo una calificación dentro de ese rango real. "
-        "Las columnas no representan porcentajes acumulados."
+        "Las barras muestran cómo se distribuyen los aspirantes en los rangos "
+        "de calificación. El rombo negro indica el promedio real obtenido "
+        "en cada dimensión."
     )
 
 
@@ -1142,7 +1168,9 @@ promedio_global = df_carrera[
     (
         df_carrera["Promedio_global_individual"].notna()
     )
-]["Promedio_global_individual"].mean()
+][
+    "Promedio_global_individual"
+].mean()
 
 st.markdown(f"### Perfil de {carrera_seleccionada}")
 
@@ -1161,7 +1189,7 @@ col5.metric(
 
 
 # ============================================================
-# RADAR Y ÁREAS PRIORITARIAS
+# RADAR
 # ============================================================
 
 st.markdown("## Perfil de dimensiones")
@@ -1176,12 +1204,12 @@ mostrar_radar_carrera(
 
 
 # ============================================================
-# MATRIZ DE RANGOS REALES
+# DISTRIBUCIÓN Y PROMEDIO REAL
 # ============================================================
 
 st.markdown("## Distribución de calificaciones por dimensión")
 
-mostrar_matriz_rangos_dimension(
+mostrar_barras_distribucion_dimension(
     df_carrera=df_carrera,
     areas_detectadas=areas_detectadas,
     carrera_seleccionada=carrera_seleccionada
