@@ -4,7 +4,6 @@ import unicodedata
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -20,9 +19,7 @@ st.set_page_config(
 )
 
 st.title("📘 Resultados EVALUATEC 2026")
-st.caption(
-    "Perfil integral de desempeño por carrera."
-)
+st.caption("Perfil académico por carrera.")
 
 
 # ============================================================
@@ -77,16 +74,11 @@ COLORES_NIVELES = {
     "Alto": "#27AE60"
 }
 
-ORDEN_ALERTAS = [
-    "Sin alerta",
-    "Alerta media",
-    "Alerta alta"
-]
-
-COLORES_ALERTAS = {
-    "Sin alerta": "#27AE60",
-    "Alerta media": "#F39C12",
-    "Alerta alta": "#E74C3C"
+ETIQUETAS_NIVELES = {
+    "Bajo": "0–24%",
+    "Básico": "25–49%",
+    "Satisfactorio": "50–74%",
+    "Alto": "75–100%"
 }
 
 
@@ -95,7 +87,7 @@ COLORES_ALERTAS = {
 # ============================================================
 
 def normalizar_texto(valor):
-    """Normaliza texto para comparar encabezados y respuestas."""
+    """Normaliza texto para comparar encabezados."""
 
     if pd.isna(valor):
         return ""
@@ -185,7 +177,7 @@ def leer_csv_archivo(archivo):
 
 
 def identificar_bloque_archivo(nombre_archivo):
-    """Identifica ADM, ARQ o ING mediante el nombre del archivo."""
+    """Identifica ADM, ARQ o ING según el nombre del archivo."""
 
     nombre = normalizar_texto(nombre_archivo)
 
@@ -202,7 +194,7 @@ def identificar_bloque_archivo(nombre_archivo):
 
 
 def clasificar_inicio(valor):
-    """Clasifica si la persona inició o no la evaluación."""
+    """Clasifica si la persona inició la evaluación."""
 
     if pd.isna(valor):
         return "No inició"
@@ -234,15 +226,7 @@ def clasificar_inicio(valor):
 
 
 def convertir_porcentaje(valor):
-    """
-    Convierte valores a escala de 0 a 100.
-
-    Soporta:
-    75
-    75.5
-    75%
-    0.75
-    """
+    """Convierte datos a una escala de 0 a 100."""
 
     if pd.isna(valor):
         return np.nan
@@ -269,7 +253,7 @@ def convertir_porcentaje(valor):
     return np.nan
 
 
-def hex_a_rgba(color_hex, alpha=0.12):
+def hex_a_rgba(color_hex, alpha=0.15):
     """Convierte hexadecimal a rgba."""
 
     color_hex = color_hex.lstrip("#")
@@ -291,10 +275,8 @@ def hex_a_rgba(color_hex, alpha=0.12):
 def detectar_columnas_areas(df):
     """
     Detecta columnas como:
-
     AreaGRALSeccionINGPorcentajeCorrectas
     AreaGRALSeccionMATPorcentajeCorrectas
-    AreaGRALSeccionCOMPorcentajeCorrectas
     """
 
     areas_detectadas = {}
@@ -345,9 +327,7 @@ def procesar_archivo(archivo):
 
     df = leer_csv_archivo(archivo)
 
-    bloque = identificar_bloque_archivo(
-        archivo.name
-    )
+    bloque = identificar_bloque_archivo(archivo.name)
 
     if bloque is None:
         raise ValueError(
@@ -390,22 +370,16 @@ def procesar_archivo(archivo):
     df["Archivo_origen"] = archivo.name
     df["Bloque"] = bloque
 
-    df["Carrera_normalizada"] = df[
-        columna_carrera
-    ].apply(
+    df["Carrera_normalizada"] = df[columna_carrera].apply(
         limpiar_nombre_carrera
     )
 
-    df["Estatus_inicio"] = df[
-        columna_inicio
-    ].apply(
+    df["Estatus_inicio"] = df[columna_inicio].apply(
         clasificar_inicio
     )
 
     for codigo, columna in areas_detectadas.items():
-        df[f"Area_{codigo}"] = df[
-            columna
-        ].apply(
+        df[f"Area_{codigo}"] = df[columna].apply(
             convertir_porcentaje
         )
 
@@ -422,14 +396,14 @@ def procesar_archivo(archivo):
 
 
 # ============================================================
-# FUNCIONES DE CÁLCULO
+# CÁLCULOS
 # ============================================================
 
 def clasificar_nivel_desempeno(valor):
-    """Clasifica el puntaje global individual en cuatro niveles."""
+    """Clasifica puntajes en rangos de desempeño."""
 
     if pd.isna(valor):
-        return "Sin dato"
+        return None
 
     if 0 <= valor < 25:
         return "Bajo"
@@ -443,67 +417,11 @@ def clasificar_nivel_desempeno(valor):
     if 75 <= valor <= 100:
         return "Alto"
 
-    return "Sin dato"
-
-
-def calcular_alertas(df, areas_detectadas):
-    """
-    Genera alertas sin mostrar nombres.
-
-    Alerta alta:
-    - promedio global menor a 25%, o
-    - tres o más dimensiones debajo de 50%.
-
-    Alerta media:
-    - promedio global menor a 50%, o
-    - dos dimensiones debajo de 50%.
-    """
-
-    df_alertas = df[
-        (
-            df["Estatus_inicio"] == "Inició"
-        )
-        &
-        (
-            df["Promedio_global_individual"].notna()
-        )
-    ].copy()
-
-    if df_alertas.empty:
-        return df_alertas
-
-    columnas_areas = [
-        f"Area_{codigo}"
-        for codigo in areas_detectadas.keys()
-        if f"Area_{codigo}" in df_alertas.columns
-    ]
-
-    df_alertas["Dimensiones_bajo_50"] = df_alertas[
-        columnas_areas
-    ].lt(50).sum(axis=1)
-
-    def asignar_alerta(fila):
-        promedio = fila["Promedio_global_individual"]
-        dimensiones_bajas = fila["Dimensiones_bajo_50"]
-
-        if promedio < 25 or dimensiones_bajas >= 3:
-            return "Alerta alta"
-
-        if promedio < 50 or dimensiones_bajas >= 2:
-            return "Alerta media"
-
-        return "Sin alerta"
-
-    df_alertas["Nivel_alerta"] = df_alertas.apply(
-        asignar_alerta,
-        axis=1
-    )
-
-    return df_alertas
+    return None
 
 
 def crear_promedio_dimensiones(df, areas_detectadas):
-    """Calcula promedio por dimensión para una selección de aspirantes."""
+    """Calcula promedio por dimensión para una selección."""
 
     df_iniciaron = df[
         df["Estatus_inicio"] == "Inició"
@@ -527,127 +445,177 @@ def crear_promedio_dimensiones(df, areas_detectadas):
                         codigo,
                         codigo
                     ),
-                    "Promedio": round(float(promedio), 1),
-                    "Nivel": clasificar_nivel_desempeno(
-                        promedio
-                    )
+                    "Promedio": round(float(promedio), 1)
                 }
             )
 
     return pd.DataFrame(resultados)
 
 
-def crear_distribucion_niveles(df):
-    """Crea la distribución porcentual del semáforo para una carrera."""
+def crear_distribucion_por_dimension(df, areas_detectadas):
+    """
+    Calcula qué porcentaje de estudiantes queda en cada rango
+    para cada dimensión.
+    """
 
     df_iniciaron = df[
-        (
-            df["Estatus_inicio"] == "Inició"
-        )
-        &
-        (
-            df["Promedio_global_individual"].notna()
-        )
+        df["Estatus_inicio"] == "Inició"
     ].copy()
 
     if df_iniciaron.empty:
         return pd.DataFrame()
 
-    df_iniciaron["Nivel_desempeno"] = df_iniciaron[
-        "Promedio_global_individual"
-    ].apply(
-        clasificar_nivel_desempeno
-    )
+    registros = []
 
-    total = len(df_iniciaron)
+    for codigo in areas_detectadas.keys():
+        columna = f"Area_{codigo}"
 
-    resumen = (
-        df_iniciaron
-        .groupby("Nivel_desempeno")
-        .size()
-        .reindex(
-            ORDEN_NIVELES,
-            fill_value=0
+        if columna not in df_iniciaron.columns:
+            continue
+
+        datos_dimension = df_iniciaron[
+            columna
+        ].dropna()
+
+        if datos_dimension.empty:
+            continue
+
+        dimension = ETIQUETAS_AREAS.get(
+            codigo,
+            codigo
         )
-        .reset_index(name="Aspirantes")
+
+        total = len(datos_dimension)
+
+        niveles = datos_dimension.apply(
+            clasificar_nivel_desempeno
+        )
+
+        conteos = niveles.value_counts()
+
+        for nivel in ORDEN_NIVELES:
+            aspirantes = int(conteos.get(nivel, 0))
+
+            registros.append(
+                {
+                    "Código": codigo,
+                    "Dimensión": dimension,
+                    "Nivel": nivel,
+                    "Aspirantes": aspirantes,
+                    "Total": total,
+                    "Porcentaje": (
+                        aspirantes / total * 100
+                    )
+                }
+            )
+
+    tabla = pd.DataFrame(registros)
+
+    if tabla.empty:
+        return tabla
+
+    promedios = (
+        tabla
+        .groupby("Dimensión")
+        .apply(
+            lambda grupo: (
+                grupo["Porcentaje"]
+                * grupo["Nivel"].map(
+                    {
+                        "Bajo": 12.5,
+                        "Básico": 37.5,
+                        "Satisfactorio": 62.5,
+                        "Alto": 87.5
+                    }
+                )
+            ).sum() / 100,
+            include_groups=False
+        )
+        .reset_index(name="Orden_visual")
     )
 
-    resumen.columns = [
-        "Nivel_desempeno",
-        "Aspirantes"
-    ]
-
-    resumen["Porcentaje"] = (
-        resumen["Aspirantes"]
-        / total
-        * 100
+    tabla = tabla.merge(
+        promedios,
+        on="Dimensión",
+        how="left"
     )
 
-    resumen["Etiqueta"] = resumen[
-        "Porcentaje"
-    ].apply(
+    orden_dimensiones = (
+        tabla[
+            [
+                "Dimensión",
+                "Orden_visual"
+            ]
+        ]
+        .drop_duplicates()
+        .sort_values(
+            "Orden_visual",
+            ascending=True
+        )["Dimensión"]
+        .tolist()
+    )
+
+    tabla["Dimensión"] = pd.Categorical(
+        tabla["Dimensión"],
+        categories=orden_dimensiones[::-1],
+        ordered=True
+    )
+
+    tabla["Nivel"] = pd.Categorical(
+        tabla["Nivel"],
+        categories=ORDEN_NIVELES,
+        ordered=True
+    )
+
+    tabla["Etiqueta"] = tabla["Porcentaje"].apply(
         lambda valor: f"{valor:.0f}%"
-        if valor >= 7
+        if valor >= 8
         else ""
     )
 
-    resumen["Total"] = total
-
-    return resumen
+    return tabla
 
 
-def crear_distribucion_alertas(df, areas_detectadas):
-    """Crea el concentrado porcentual de alertas de una carrera."""
+def crear_diagnostico_carrera(
+    df_carrera,
+    df_bloque,
+    areas_detectadas,
+    carrera_seleccionada
+):
+    """Genera una lectura breve para coordinación."""
 
-    df_alertas = calcular_alertas(
-        df,
+    promedio_carrera = crear_promedio_dimensiones(
+        df_carrera,
         areas_detectadas
     )
 
-    if df_alertas.empty:
-        return pd.DataFrame()
+    promedio_bloque = crear_promedio_dimensiones(
+        df_bloque,
+        areas_detectadas
+    )
 
-    total = len(df_alertas)
+    if promedio_carrera.empty:
+        return "No hay información suficiente para generar un diagnóstico."
 
-    resumen = (
-        df_alertas
-        .groupby("Nivel_alerta")
-        .size()
-        .reindex(
-            ORDEN_ALERTAS,
-            fill_value=0
+    ranking = promedio_carrera.sort_values(
+        "Promedio",
+        ascending=True
+    ).reset_index(drop=True)
+
+    areas_prioritarias = ranking.head(2)
+    area_fuerte = ranking.iloc[-1]
+
+    promedio_global_carrera = df_carrera[
+        (
+            df_carrera["Estatus_inicio"] == "Inició"
         )
-        .reset_index(name="Aspirantes")
-    )
+        &
+        (
+            df_carrera["Promedio_global_individual"].notna()
+        )
+    ]["Promedio_global_individual"].mean()
 
-    resumen.columns = [
-        "Nivel_alerta",
-        "Aspirantes"
-    ]
-
-    resumen["Porcentaje"] = (
-        resumen["Aspirantes"]
-        / total
-        * 100
-    )
-
-    resumen["Etiqueta"] = resumen[
-        "Porcentaje"
-    ].apply(
-        lambda valor: f"{valor:.0f}%"
-        if valor >= 7
-        else ""
-    )
-
-    resumen["Total"] = total
-
-    return resumen
-
-
-def crear_comparativo_bloque(df_bloque):
-    """Calcula el promedio global y posición de cada carrera del bloque."""
-
-    df_iniciaron = df_bloque[
+    promedio_global_bloque = df_bloque[
         (
             df_bloque["Estatus_inicio"] == "Inició"
         )
@@ -655,41 +623,40 @@ def crear_comparativo_bloque(df_bloque):
         (
             df_bloque["Promedio_global_individual"].notna()
         )
-    ].copy()
+    ]["Promedio_global_individual"].mean()
 
-    if df_iniciaron.empty:
-        return pd.DataFrame()
-
-    comparativo = (
-        df_iniciaron
-        .groupby("Carrera_normalizada")
-        .agg(
-            Promedio_global=(
-                "Promedio_global_individual",
-                "mean"
-            ),
-            Evaluados=(
-                "Promedio_global_individual",
-                "size"
+    prioridades = ", ".join(
+        [
+            (
+                f"{fila['Dimensión']} "
+                f"({fila['Promedio']:.1f}%)"
             )
-        )
-        .reset_index()
-        .sort_values(
-            "Promedio_global",
-            ascending=False
-        )
-        .reset_index(drop=True)
+            for _, fila in areas_prioritarias.iterrows()
+        ]
     )
 
-    comparativo["Promedio_global"] = comparativo[
-        "Promedio_global"
-    ].round(1)
-
-    comparativo["Posición"] = (
-        comparativo.index + 1
+    diferencia = (
+        promedio_global_carrera
+        - promedio_global_bloque
     )
 
-    return comparativo
+    if diferencia >= 0:
+        comparacion = (
+            f"{diferencia:.1f} puntos por encima"
+        )
+    else:
+        comparacion = (
+            f"{abs(diferencia):.1f} puntos por debajo"
+        )
+
+    return (
+        f"**{carrera_seleccionada}** presenta un promedio global de "
+        f"**{promedio_global_carrera:.1f}%**, equivalente a "
+        f"**{comparacion}** del promedio general de {BLOQUES[df_bloque['Bloque'].iloc[0]]}. "
+        f"Las principales áreas de fortalecimiento son **{prioridades}**. "
+        f"La dimensión con mejor resultado es **{area_fuerte['Dimensión']}** "
+        f"({area_fuerte['Promedio']:.1f}%)."
+    )
 
 
 # ============================================================
@@ -704,8 +671,8 @@ def mostrar_radar_carrera(
     nombre_bloque
 ):
     """
-    Radar de carrera seleccionada frente al promedio
-    general del bloque.
+    Muestra carrera seleccionada contra el promedio del archivo.
+    Los dos resultados más bajos se resaltan en rojo.
     """
 
     promedio_carrera = crear_promedio_dimensiones(
@@ -719,22 +686,22 @@ def mostrar_radar_carrera(
     )
 
     if promedio_carrera.empty:
-        st.info(
-            "No hay datos suficientes para generar el radar."
-        )
+        st.info("No hay datos suficientes para generar el radar.")
         return
 
-    codigos = promedio_carrera[
-        "Código"
-    ].tolist()
+    promedio_carrera = promedio_carrera.sort_values(
+        "Código",
+        key=lambda serie: serie.map(
+            {
+                codigo: indice
+                for indice, codigo in enumerate(ORDEN_AREAS)
+            }
+        )
+    )
 
-    etiquetas = promedio_carrera[
-        "Dimensión"
-    ].tolist()
-
-    valores_carrera = promedio_carrera[
-        "Promedio"
-    ].tolist()
+    codigos = promedio_carrera["Código"].tolist()
+    etiquetas = promedio_carrera["Dimensión"].tolist()
+    valores_carrera = promedio_carrera["Promedio"].tolist()
 
     valores_bloque = []
 
@@ -747,10 +714,17 @@ def mostrar_radar_carrera(
             valores_bloque.append(0)
         else:
             valores_bloque.append(
-                float(
-                    fila_bloque["Promedio"].iloc[0]
-                )
+                float(fila_bloque["Promedio"].iloc[0])
             )
+
+    ranking_bajo = promedio_carrera.sort_values(
+        "Promedio",
+        ascending=True
+    ).head(2)
+
+    codigos_bajos = ranking_bajo["Código"].tolist()
+    etiquetas_bajas = ranking_bajo["Dimensión"].tolist()
+    valores_bajos = ranking_bajo["Promedio"].tolist()
 
     etiquetas_cerradas = etiquetas + [etiquetas[0]]
     valores_carrera_cerrados = valores_carrera + [
@@ -775,7 +749,7 @@ def mostrar_radar_carrera(
             ),
             marker=dict(
                 color="#9E9E9E",
-                size=5
+                size=6
             ),
             hovertemplate=(
                 "<b>Promedio del bloque</b><br>"
@@ -802,7 +776,7 @@ def mostrar_radar_carrera(
             fill="toself",
             fillcolor=hex_a_rgba(
                 "#4C78A8",
-                alpha=0.16
+                alpha=0.14
             ),
             hovertemplate=(
                 f"<b>{carrera_seleccionada}</b><br>"
@@ -812,10 +786,30 @@ def mostrar_radar_carrera(
         )
     )
 
+    fig.add_trace(
+        go.Scatterpolar(
+            r=valores_bajos,
+            theta=etiquetas_bajas,
+            mode="markers",
+            name="Áreas prioritarias",
+            marker=dict(
+                color="#E74C3C",
+                size=14,
+                line=dict(
+                    color="white",
+                    width=2
+                )
+            ),
+            hovertemplate=(
+                "<b>Área prioritaria</b><br>"
+                "%{theta}: %{r:.1f}%"
+                "<extra></extra>"
+            )
+        )
+    )
+
     fig.update_layout(
-        title=(
-            f"Perfil de dimensiones · {carrera_seleccionada}"
-        ),
+        title=f"Perfil de dimensiones · {carrera_seleccionada}",
         polar=dict(
             radialaxis=dict(
                 visible=True,
@@ -839,390 +833,141 @@ def mostrar_radar_carrera(
         )
     )
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True
+    col_grafica, col_prioridades = st.columns(
+        [3, 1]
     )
 
-
-def mostrar_semaforo_carrera(
-    df_carrera,
-    carrera_seleccionada
-):
-    """Muestra una barra semáforo al 100% para la carrera."""
-
-    tabla = crear_distribucion_niveles(
-        df_carrera
-    )
-
-    if tabla.empty:
-        st.info(
-            "No hay resultados suficientes para generar el semáforo."
-        )
-        return
-
-    fig = px.bar(
-        tabla,
-        x="Porcentaje",
-        y=["Desempeño"] * len(tabla),
-        color="Nivel_desempeno",
-        orientation="h",
-        barmode="stack",
-        text="Etiqueta",
-        custom_data=[
-            "Aspirantes",
-            "Total"
-        ],
-        category_orders={
-            "Nivel_desempeno": ORDEN_NIVELES
-        },
-        color_discrete_map=COLORES_NIVELES
-    )
-
-    fig.update_traces(
-        textposition="inside",
-        insidetextanchor="middle",
-        hovertemplate=(
-            "<b>Nivel:</b> %{fullData.name}<br>"
-            "<b>Aspirantes:</b> %{customdata[0]} de %{customdata[1]}<br>"
-            "<b>Porcentaje:</b> %{x:.1f}%"
-            "<extra></extra>"
-        )
-    )
-
-    fig.update_layout(
-        title=(
-            f"Semáforo de desempeño global · {carrera_seleccionada}"
-        ),
-        legend_title_text="Nivel de desempeño",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.08,
-            xanchor="center",
-            x=0.5
-        ),
-        xaxis=dict(
-            title="Porcentaje de aspirantes",
-            range=[0, 100],
-            ticksuffix="%"
-        ),
-        yaxis=dict(
-            showticklabels=False,
-            title=""
-        ),
-        height=350,
-        margin=dict(
-            t=90,
-            b=50,
-            l=20,
-            r=20
-        )
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-    st.caption(
-        "Bajo: 0–24% | Básico: 25–49% | "
-        "Satisfactorio: 50–74% | Alto: 75–100%"
-    )
-
-
-def mostrar_ranking_dimensiones(
-    df_carrera,
-    areas_detectadas,
-    carrera_seleccionada
-):
-    """Muestra dimensiones de menor a mayor promedio."""
-
-    ranking = crear_promedio_dimensiones(
-        df_carrera,
-        areas_detectadas
-    )
-
-    if ranking.empty:
-        st.info(
-            "No hay resultados suficientes para construir el ranking."
-        )
-        return
-
-    ranking = ranking.sort_values(
-        "Promedio",
-        ascending=True
-    )
-
-    fig = px.bar(
-        ranking,
-        x="Promedio",
-        y="Dimensión",
-        color="Nivel",
-        orientation="h",
-        text="Promedio",
-        color_discrete_map=COLORES_NIVELES,
-        category_orders={
-            "Nivel": ORDEN_NIVELES,
-            "Dimensión": ranking[
-                "Dimensión"
-            ].tolist()
-        }
-    )
-
-    fig.update_traces(
-        texttemplate="%{text:.1f}%",
-        textposition="outside",
-        hovertemplate=(
-            "<b>%{y}</b><br>"
-            "Promedio: %{x:.1f}%"
-            "<extra></extra>"
-        )
-    )
-
-    fig.update_layout(
-        title=(
-            f"Ranking de dimensiones · {carrera_seleccionada}"
-        ),
-        showlegend=False,
-        xaxis=dict(
-            title="Promedio obtenido",
-            range=[0, 100],
-            ticksuffix="%"
-        ),
-        yaxis_title="",
-        height=480,
-        margin=dict(
-            t=80,
-            b=45,
-            l=240,
-            r=90
-        )
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-
-def mostrar_alertas_carrera(
-    df_carrera,
-    areas_detectadas,
-    carrera_seleccionada
-):
-    """Muestra concentrado de alertas académicas sin nombres."""
-
-    tabla = crear_distribucion_alertas(
-        df_carrera,
-        areas_detectadas
-    )
-
-    if tabla.empty:
-        st.info(
-            "No hay información suficiente para calcular alertas."
-        )
-        return
-
-    fig = px.bar(
-        tabla,
-        x="Porcentaje",
-        y=["Alertas"] * len(tabla),
-        color="Nivel_alerta",
-        orientation="h",
-        barmode="stack",
-        text="Etiqueta",
-        custom_data=[
-            "Aspirantes",
-            "Total"
-        ],
-        category_orders={
-            "Nivel_alerta": ORDEN_ALERTAS
-        },
-        color_discrete_map=COLORES_ALERTAS
-    )
-
-    fig.update_traces(
-        textposition="inside",
-        insidetextanchor="middle",
-        hovertemplate=(
-            "<b>Nivel:</b> %{fullData.name}<br>"
-            "<b>Aspirantes:</b> %{customdata[0]} de %{customdata[1]}<br>"
-            "<b>Porcentaje:</b> %{x:.1f}%"
-            "<extra></extra>"
-        )
-    )
-
-    fig.update_layout(
-        title=(
-            f"Alertas académicas · {carrera_seleccionada}"
-        ),
-        legend_title_text="Nivel de alerta",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.08,
-            xanchor="center",
-            x=0.5
-        ),
-        xaxis=dict(
-            title="Porcentaje de aspirantes",
-            range=[0, 100],
-            ticksuffix="%"
-        ),
-        yaxis=dict(
-            showticklabels=False,
-            title=""
-        ),
-        height=350,
-        margin=dict(
-            t=90,
-            b=50,
-            l=20,
-            r=20
-        )
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-    st.caption(
-        "Alerta media: promedio global menor a 50% o dos dimensiones "
-        "debajo de 50%. Alerta alta: promedio global menor a 25% o "
-        "tres o más dimensiones debajo de 50%."
-    )
-
-
-# ============================================================
-# DIAGNÓSTICO DE CARRERA
-# ============================================================
-
-def crear_diagnostico_carrera(
-    df_carrera,
-    df_bloque,
-    areas_detectadas,
-    carrera_seleccionada
-):
-    """Crea texto ejecutivo para la carrera seleccionada."""
-
-    ranking = crear_promedio_dimensiones(
-        df_carrera,
-        areas_detectadas
-    )
-
-    alertas = crear_distribucion_alertas(
-        df_carrera,
-        areas_detectadas
-    )
-
-    comparativo = crear_comparativo_bloque(
-        df_bloque
-    )
-
-    if ranking.empty:
-        return "No hay suficientes datos para generar un diagnóstico."
-
-    ranking = ranking.sort_values(
-        "Promedio",
-        ascending=True
-    )
-
-    area_prioritaria = ranking.iloc[0]
-    area_fuerte = ranking.iloc[-1]
-
-    dimensiones_bajas = ranking[
-        ranking["Promedio"] < 50
-    ]
-
-    total_dimensiones_bajas = len(
-        dimensiones_bajas
-    )
-
-    promedio_carrera = df_carrera[
-        (
-            df_carrera["Estatus_inicio"] == "Inició"
-        )
-        &
-        (
-            df_carrera["Promedio_global_individual"].notna()
-        )
-    ][
-        "Promedio_global_individual"
-    ].mean()
-
-    promedio_bloque = df_bloque[
-        (
-            df_bloque["Estatus_inicio"] == "Inició"
-        )
-        &
-        (
-            df_bloque["Promedio_global_individual"].notna()
-        )
-    ][
-        "Promedio_global_individual"
-    ].mean()
-
-    fila_comparativo = comparativo[
-        comparativo["Carrera_normalizada"]
-        == carrera_seleccionada
-    ]
-
-    if fila_comparativo.empty:
-        posicion_texto = ""
-    else:
-        posicion = int(
-            fila_comparativo["Posición"].iloc[0]
-        )
-        total_carreras = len(comparativo)
-
-        posicion_texto = (
-            f" Se ubica en la posición {posicion} de "
-            f"{total_carreras} carreras del bloque."
+    with col_grafica:
+        st.plotly_chart(
+            fig,
+            use_container_width=True
         )
 
-    porcentaje_alerta_alta = 0
+    with col_prioridades:
+        st.markdown("### 🔴 Áreas prioritarias")
+        st.caption(
+            "Las dimensiones con menor promedio "
+            "en la carrera seleccionada."
+        )
 
-    if not alertas.empty:
-        fila_alerta_alta = alertas[
-            alertas["Nivel_alerta"] == "Alerta alta"
-        ]
-
-        if not fila_alerta_alta.empty:
-            porcentaje_alerta_alta = float(
-                fila_alerta_alta["Porcentaje"].iloc[0]
+        for _, fila in ranking_bajo.iterrows():
+            st.metric(
+                fila["Dimensión"],
+                f"{fila['Promedio']:.1f}%"
             )
 
-    texto = (
-        f"**{carrera_seleccionada}** presenta un promedio global de "
-        f"**{promedio_carrera:.1f}%**, frente a **{promedio_bloque:.1f}%** "
-        f"del bloque de referencia.{posicion_texto} "
-        f"La principal área prioritaria es **{area_prioritaria['Dimensión']}** "
-        f"({area_prioritaria['Promedio']:.1f}%), mientras que la dimensión "
-        f"más alta es **{area_fuerte['Dimensión']}** "
-        f"({area_fuerte['Promedio']:.1f}%). "
+        st.markdown("---")
+
+        st.markdown("**Referencia visual**")
+        st.caption(
+            f"Línea gris punteada: promedio de {nombre_bloque}. "
+            "Puntos rojos: áreas prioritarias."
+        )
+
+
+def mostrar_distribucion_dimensiones(
+    df_carrera,
+    areas_detectadas,
+    carrera_seleccionada
+):
+    """
+    Muestra una barra apilada para cada dimensión:
+    proporción de estudiantes en bajo, básico,
+    satisfactorio y alto.
+    """
+
+    tabla = crear_distribucion_por_dimension(
+        df_carrera,
+        areas_detectadas
     )
 
-    if total_dimensiones_bajas > 0:
-        texto += (
-            f"Se identifican {total_dimensiones_bajas} dimensión(es) con "
-            f"promedio inferior a 50%, por lo que se recomienda reforzarlas "
-            f"durante el propedéutico. "
+    if tabla.empty:
+        st.info(
+            "No hay información suficiente para generar la distribución."
+        )
+        return
+
+    fig = go.Figure()
+
+    for nivel in ORDEN_NIVELES:
+        datos_nivel = tabla[
+            tabla["Nivel"] == nivel
+        ].copy()
+
+        fig.add_trace(
+            go.Bar(
+                x=datos_nivel["Porcentaje"],
+                y=datos_nivel["Dimensión"],
+                orientation="h",
+                name=f"{nivel} · {ETIQUETAS_NIVELES[nivel]}",
+                text=datos_nivel["Etiqueta"],
+                textposition="inside",
+                insidetextanchor="middle",
+                marker_color=COLORES_NIVELES[nivel],
+                customdata=np.column_stack(
+                    [
+                        datos_nivel["Aspirantes"],
+                        datos_nivel["Total"]
+                    ]
+                ),
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    f"<b>Rango:</b> {nivel} · {ETIQUETAS_NIVELES[nivel]}<br>"
+                    "<b>Aspirantes:</b> %{customdata[0]} de %{customdata[1]}<br>"
+                    "<b>Porcentaje:</b> %{x:.1f}%"
+                    "<extra></extra>"
+                )
+            )
         )
 
-    if porcentaje_alerta_alta > 0:
-        texto += (
-            f"Además, {porcentaje_alerta_alta:.1f}% de quienes iniciaron "
-            f"presenta alerta académica alta, por lo que conviene priorizar "
-            f"acciones de nivelación temprana."
-        )
-    else:
-        texto += (
-            "No se observa presencia de alerta académica alta en la carrera."
-        )
+    numero_dimensiones = len(
+        tabla["Dimensión"].unique()
+    )
 
-    return texto
+    fig.update_layout(
+        title=(
+            "Distribución de resultados por dimensión · "
+            f"{carrera_seleccionada}"
+        ),
+        barmode="stack",
+        legend_title_text="Rango de calificación",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.08,
+            xanchor="center",
+            x=0.5
+        ),
+        xaxis=dict(
+            title="Porcentaje de aspirantes",
+            range=[0, 100],
+            ticksuffix="%"
+        ),
+        yaxis=dict(
+            title=""
+        ),
+        height=max(
+            440,
+            numero_dimensiones * 78 + 180
+        ),
+        margin=dict(
+            t=100,
+            b=50,
+            l=260,
+            r=30
+        )
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    st.caption(
+        "Cada barra representa una dimensión. "
+        "Los colores muestran en qué rango de calificación "
+        "se ubican los aspirantes de la carrera."
+    )
 
 
 # ============================================================
@@ -1264,9 +1009,7 @@ for archivo in archivos_subidos:
             archivo
         )
 
-        bloque = df_archivo[
-            "Bloque"
-        ].iloc[0]
+        bloque = df_archivo["Bloque"].iloc[0]
 
         datos_por_bloque[bloque] = {
             "df": df_archivo,
@@ -1302,8 +1045,7 @@ bloque_seleccionado = st.radio(
     options=bloques_disponibles,
     horizontal=True,
     format_func=lambda codigo: (
-        f"{ICONOS_BLOQUES[codigo]} "
-        f"{BLOQUES[codigo]}"
+        f"{ICONOS_BLOQUES[codigo]} {BLOQUES[codigo]}"
     ),
     label_visibility="collapsed"
 )
@@ -1312,17 +1054,9 @@ informacion_bloque = datos_por_bloque[
     bloque_seleccionado
 ]
 
-df_bloque = informacion_bloque[
-    "df"
-].copy()
-
-areas_detectadas = informacion_bloque[
-    "areas"
-]
-
-nombre_bloque = BLOQUES[
-    bloque_seleccionado
-]
+df_bloque = informacion_bloque["df"].copy()
+areas_detectadas = informacion_bloque["areas"]
+nombre_bloque = BLOQUES[bloque_seleccionado]
 
 st.markdown(f"## {nombre_bloque}")
 
@@ -1336,9 +1070,7 @@ st.caption(
 # ============================================================
 
 carreras_disponibles = sorted(
-    df_bloque[
-        "Carrera_normalizada"
-    ]
+    df_bloque["Carrera_normalizada"]
     .dropna()
     .unique()
 )
@@ -1356,7 +1088,7 @@ df_carrera = df_bloque[
 
 
 # ============================================================
-# INDICADORES EJECUTIVOS
+# INDICADORES PRINCIPALES
 # ============================================================
 
 total_registrados = len(df_carrera)
@@ -1387,46 +1119,26 @@ promedio_global = df_carrera[
     (
         df_carrera["Promedio_global_individual"].notna()
     )
-][
-    "Promedio_global_individual"
-].mean()
+]["Promedio_global_individual"].mean()
 
 st.markdown(f"### Perfil de {carrera_seleccionada}")
 
 col1, col2, col3, col4, col5 = st.columns(5)
 
-col1.metric(
-    "Registrados",
-    f"{total_registrados:,}"
-)
-
-col2.metric(
-    "Iniciaron",
-    f"{total_iniciaron:,}"
-)
-
-col3.metric(
-    "No iniciaron",
-    f"{total_no_iniciaron:,}"
-)
-
-col4.metric(
-    "% de inicio",
-    f"{porcentaje_inicio:.1f}%"
-)
-
+col1.metric("Registrados", f"{total_registrados:,}")
+col2.metric("Iniciaron", f"{total_iniciaron:,}")
+col3.metric("No iniciaron", f"{total_no_iniciaron:,}")
+col4.metric("% de inicio", f"{porcentaje_inicio:.1f}%")
 col5.metric(
     "Promedio global",
-    (
-        f"{promedio_global:.1f}%"
-        if pd.notna(promedio_global)
-        else "Sin dato"
-    )
+    f"{promedio_global:.1f}%"
+    if pd.notna(promedio_global)
+    else "Sin dato"
 )
 
 
 # ============================================================
-# RADAR
+# RADAR Y ÁREAS PRIORITARIAS
 # ============================================================
 
 st.markdown("## Perfil de dimensiones")
@@ -1441,34 +1153,12 @@ mostrar_radar_carrera(
 
 
 # ============================================================
-# SEMÁFORO Y ALERTAS
+# DISTRIBUCIÓN POR DIMENSIÓN
 # ============================================================
 
-st.markdown("## Desempeño y alertas académicas")
+st.markdown("## Distribución de calificaciones por dimensión")
 
-col_semaforo, col_alertas = st.columns(2)
-
-with col_semaforo:
-    mostrar_semaforo_carrera(
-        df_carrera=df_carrera,
-        carrera_seleccionada=carrera_seleccionada
-    )
-
-with col_alertas:
-    mostrar_alertas_carrera(
-        df_carrera=df_carrera,
-        areas_detectadas=areas_detectadas,
-        carrera_seleccionada=carrera_seleccionada
-    )
-
-
-# ============================================================
-# RANKING DE DIMENSIONES
-# ============================================================
-
-st.markdown("## Ranking de dimensiones")
-
-mostrar_ranking_dimensiones(
+mostrar_distribucion_dimensiones(
     df_carrera=df_carrera,
     areas_detectadas=areas_detectadas,
     carrera_seleccionada=carrera_seleccionada
@@ -1489,68 +1179,3 @@ diagnostico = crear_diagnostico_carrera(
 )
 
 st.info(diagnostico)
-
-
-# ============================================================
-# COMPARATIVO DEL BLOQUE
-# ============================================================
-
-st.markdown("## Comparativo dentro del bloque")
-
-comparativo_bloque = crear_comparativo_bloque(
-    df_bloque
-)
-
-if comparativo_bloque.empty:
-    st.info(
-        "No hay información suficiente para comparar carreras."
-    )
-else:
-    fig_comparativo = px.bar(
-        comparativo_bloque.sort_values(
-            "Promedio_global",
-            ascending=True
-        ),
-        x="Promedio_global",
-        y="Carrera_normalizada",
-        orientation="h",
-        text="Promedio_global"
-    )
-
-    fig_comparativo.update_traces(
-        texttemplate="%{text:.1f}%",
-        textposition="outside",
-        hovertemplate=(
-            "<b>%{y}</b><br>"
-            "Promedio global: %{x:.1f}%"
-            "<extra></extra>"
-        )
-    )
-
-    fig_comparativo.update_layout(
-        title=(
-            f"Promedio global por carrera · {nombre_bloque}"
-        ),
-        xaxis=dict(
-            title="Promedio global",
-            range=[0, 100],
-            ticksuffix="%"
-        ),
-        yaxis_title="",
-        showlegend=False,
-        height=max(
-            420,
-            len(comparativo_bloque) * 70
-        ),
-        margin=dict(
-            t=80,
-            b=40,
-            l=250,
-            r=90
-        )
-    )
-
-    st.plotly_chart(
-        fig_comparativo,
-        use_container_width=True
-    )
