@@ -1,7 +1,9 @@
 import io
+import math
 import re
 import unicodedata
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -20,7 +22,7 @@ st.set_page_config(
 
 st.title("📘 Resultados EVALUATEC 2026")
 st.caption(
-    "Comparativo de desempeño por bloque académico y carrera."
+    "Análisis de desempeño, distribución de resultados y relación entre dimensiones."
 )
 
 
@@ -70,13 +72,24 @@ COLORES_NIVELES = {
     "Alto": "#27AE60"
 }
 
+COLORES_NODOS = [
+    "#4C78A8",
+    "#F58518",
+    "#54A24B",
+    "#E45756",
+    "#B279A2",
+    "#72B7B2",
+    "#FF9DA6",
+    "#9D755D"
+]
+
 
 # ============================================================
 # FUNCIONES GENERALES
 # ============================================================
 
 def normalizar_texto(valor):
-    """Normaliza texto para comparaciones."""
+    """Normaliza texto para comparar encabezados y respuestas."""
 
     if pd.isna(valor):
         return ""
@@ -103,7 +116,7 @@ def limpiar_nombre_carrera(valor):
 
 
 def encontrar_columna(df, posibles_nombres):
-    """Encuentra una columna ignorando acentos, espacios y mayúsculas."""
+    """Encuentra columnas ignorando acentos, espacios y mayúsculas."""
 
     columnas_normalizadas = {
         normalizar_texto(columna): columna
@@ -120,7 +133,7 @@ def encontrar_columna(df, posibles_nombres):
 
 
 def leer_csv_archivo(archivo):
-    """Lee un archivo CSV intentando formatos frecuentes."""
+    """Lee archivos CSV intentando codificaciones y separadores frecuentes."""
 
     contenido = archivo.getvalue()
 
@@ -176,7 +189,7 @@ def identificar_bloque_archivo(nombre_archivo):
 
 
 def clasificar_inicio(valor):
-    """Clasifica si el aspirante inició la evaluación."""
+    """Clasifica si un aspirante inició la evaluación."""
 
     if pd.isna(valor):
         return "No inició"
@@ -208,15 +221,23 @@ def clasificar_inicio(valor):
 
 
 def convertir_porcentaje(valor):
-    """Convierte datos a una escala de 0 a 100."""
+    """
+    Convierte valores a escala de 0 a 100.
+
+    Acepta:
+    75
+    75.5
+    75%
+    0.75
+    """
 
     if pd.isna(valor):
-        return None
+        return np.nan
 
     texto = str(valor).strip()
 
     if texto == "":
-        return None
+        return np.nan
 
     texto = texto.replace("%", "")
     texto = texto.replace(",", ".")
@@ -224,7 +245,7 @@ def convertir_porcentaje(valor):
     try:
         numero = float(texto)
     except ValueError:
-        return None
+        return np.nan
 
     if 0 <= numero <= 1:
         return numero * 100
@@ -232,11 +253,11 @@ def convertir_porcentaje(valor):
     if 0 <= numero <= 100:
         return numero
 
-    return None
+    return np.nan
 
 
 def hex_a_rgba(color_hex, alpha=0.12):
-    """Convierte un color hexadecimal a rgba."""
+    """Convierte hexadecimal a rgba para áreas semitransparentes."""
 
     color_hex = color_hex.lstrip("#")
 
@@ -257,8 +278,10 @@ def hex_a_rgba(color_hex, alpha=0.12):
 def detectar_columnas_areas(df):
     """
     Detecta columnas como:
+
     AreaGRALSeccionINGPorcentajeCorrectas
     AreaGRALSeccionMATPorcentajeCorrectas
+    AreaGRALSeccionCOMPorcentajeCorrectas
     """
 
     areas_detectadas = {}
@@ -295,11 +318,11 @@ def detectar_columnas_areas(df):
 
 
 # ============================================================
-# PROCESAMIENTO DE ARCHIVOS
+# PROCESAMIENTO
 # ============================================================
 
 def procesar_archivo(archivo):
-    """Lee y prepara un archivo de resultados EVALUATEC."""
+    """Lee y prepara un archivo CSV de EVALUATEC."""
 
     df = leer_csv_archivo(archivo)
 
@@ -308,7 +331,7 @@ def procesar_archivo(archivo):
     if bloque is None:
         raise ValueError(
             "No se identificó el bloque. "
-            "El archivo debe contener Administración, Arquitectura o Ingeniería."
+            "El nombre del archivo debe contener Administración, Arquitectura o Ingeniería."
         )
 
     columna_carrera = encontrar_columna(
@@ -340,7 +363,7 @@ def procesar_archivo(archivo):
 
     if not areas_detectadas:
         raise ValueError(
-            f"{archivo.name}: no se detectaron áreas de evaluación."
+            f"{archivo.name}: no se detectaron columnas de áreas evaluadas."
         )
 
     df["Archivo_origen"] = archivo.name
@@ -372,7 +395,7 @@ def procesar_archivo(archivo):
 
 
 def crear_mapa_colores_carreras(df):
-    """Asigna colores distintos y consistentes a cada carrera."""
+    """Asigna colores consistentes para cada carrera."""
 
     paleta = (
         px.colors.qualitative.Alphabet
@@ -395,7 +418,7 @@ def crear_mapa_colores_carreras(df):
 
 
 def crear_promedios_por_carrera(df, areas_detectadas):
-    """Calcula promedio por dimensión para cada carrera."""
+    """Calcula promedio por dimensión en cada carrera."""
 
     df_iniciaron = df[
         df["Estatus_inicio"] == "Inició"
@@ -437,7 +460,7 @@ def crear_promedios_por_carrera(df, areas_detectadas):
 
 def clasificar_nivel_desempeno(valor):
     """
-    Clasifica el promedio individual en bloques de 25%.
+    Clasifica promedio individual en bloques de 25%.
 
     Bajo: 0–24%
     Básico: 25–49%
@@ -464,7 +487,7 @@ def clasificar_nivel_desempeno(valor):
 
 
 def crear_distribucion_desempeno(df):
-    """Genera distribución del semáforo por carrera."""
+    """Genera distribución semáforo por carrera."""
 
     df_iniciaron = df[
         (
@@ -579,7 +602,408 @@ def crear_distribucion_desempeno(df):
 
 
 # ============================================================
-# GRÁFICAS
+# RED DE CORRELACIÓN
+# ============================================================
+
+def crear_matriz_correlacion(df, areas_detectadas):
+    """
+    Calcula correlaciones de Spearman entre dimensiones.
+
+    Solo se utilizan aspirantes que iniciaron la evaluación.
+    """
+
+    df_iniciaron = df[
+        df["Estatus_inicio"] == "Inició"
+    ].copy()
+
+    columnas_areas = [
+        f"Area_{codigo}"
+        for codigo in areas_detectadas.keys()
+    ]
+
+    if len(columnas_areas) < 2:
+        return pd.DataFrame(), pd.DataFrame()
+
+    datos = df_iniciaron[columnas_areas].copy()
+
+    datos = datos.dropna(
+        axis=1,
+        how="all"
+    )
+
+    datos = datos.loc[
+        :,
+        datos.nunique(dropna=True) > 1
+    ]
+
+    if datos.shape[1] < 2:
+        return pd.DataFrame(), pd.DataFrame()
+
+    correlacion = datos.corr(
+        method="spearman",
+        min_periods=10
+    )
+
+    conteos_validos = datos.notna().sum()
+
+    return correlacion, conteos_validos
+
+
+def crear_diagnostico_correlacion(
+    df_bloque,
+    areas_detectadas
+):
+    """Crea diagnóstico ejecutivo de relación entre dimensiones."""
+
+    correlacion, conteos_validos = crear_matriz_correlacion(
+        df_bloque,
+        areas_detectadas
+    )
+
+    if correlacion.empty:
+        return [
+            "No hay suficientes registros válidos para estimar correlaciones "
+            "entre las dimensiones."
+        ]
+
+    nombres = {
+        f"Area_{codigo}": ETIQUETAS_AREAS.get(codigo, codigo)
+        for codigo in areas_detectadas.keys()
+    }
+
+    correlacion = correlacion.rename(
+        index=nombres,
+        columns=nombres
+    )
+
+    pares = []
+
+    columnas = list(correlacion.columns)
+
+    for i in range(len(columnas)):
+        for j in range(i + 1, len(columnas)):
+            dimension_1 = columnas[i]
+            dimension_2 = columnas[j]
+            valor = correlacion.loc[dimension_1, dimension_2]
+
+            if pd.notna(valor):
+                pares.append(
+                    {
+                        "dimension_1": dimension_1,
+                        "dimension_2": dimension_2,
+                        "rho": float(valor),
+                        "abs_rho": abs(float(valor))
+                    }
+                )
+
+    if not pares:
+        return [
+            "No fue posible calcular relaciones consistentes entre las dimensiones."
+        ]
+
+    df_pares = pd.DataFrame(pares)
+
+    relacion_fuerte = df_pares.sort_values(
+        "abs_rho",
+        ascending=False
+    ).iloc[0]
+
+    promedio_absoluto = {}
+
+    for dimension in columnas:
+        valores = correlacion.loc[
+            dimension
+        ].drop(
+            labels=[dimension],
+            errors="ignore"
+        ).dropna()
+
+        promedio_absoluto[dimension] = (
+            valores.abs().mean()
+            if not valores.empty
+            else np.nan
+        )
+
+    serie_integracion = pd.Series(
+        promedio_absoluto
+    ).dropna()
+
+    dimension_mas_conectada = serie_integracion.idxmax()
+    dimension_menos_conectada = serie_integracion.idxmin()
+
+    df_iniciaron = df_bloque[
+        df_bloque["Estatus_inicio"] == "Inició"
+    ].copy()
+
+    columnas_areas = [
+        f"Area_{codigo}"
+        for codigo in areas_detectadas.keys()
+        if f"Area_{codigo}" in df_iniciaron.columns
+    ]
+
+    promedios = df_iniciaron[
+        columnas_areas
+    ].mean().dropna()
+
+    promedios.index = [
+        nombres.get(columna, columna)
+        for columna in promedios.index
+    ]
+
+    dimension_mas_alta = promedios.idxmax()
+    dimension_mas_baja = promedios.idxmin()
+
+    valor_mas_alto = promedios.loc[dimension_mas_alta]
+    valor_mas_bajo = promedios.loc[dimension_mas_baja]
+
+    rho = relacion_fuerte["rho"]
+
+    if rho >= 0.70:
+        intensidad = "alta"
+    elif rho >= 0.50:
+        intensidad = "moderada-alta"
+    elif rho >= 0.30:
+        intensidad = "moderada"
+    elif rho >= 0:
+        intensidad = "baja"
+    else:
+        intensidad = "inversa"
+
+    diagnostico = []
+
+    diagnostico.append(
+        f"**Relación principal.** Se observa una correlación "
+        f"{intensidad} entre **{relacion_fuerte['dimension_1']}** y "
+        f"**{relacion_fuerte['dimension_2']}** "
+        f"(`ρ = {rho:.2f}`). Esto indica que, en general, quienes "
+        f"obtienen mejores resultados en una de estas dimensiones suelen "
+        f"mostrar un desempeño similar en la otra."
+    )
+
+    diagnostico.append(
+        f"**Dimensión más integrada.** "
+        f"**{dimension_mas_conectada}** presenta la mayor relación promedio "
+        f"con el resto de las habilidades "
+        f"(`|ρ| promedio = {serie_integracion.loc[dimension_mas_conectada]:.2f}`)."
+    )
+
+    diagnostico.append(
+        f"**Dimensión menos conectada.** "
+        f"**{dimension_menos_conectada}** presenta menor relación con las "
+        f"demás áreas (`|ρ| promedio = "
+        f"{serie_integracion.loc[dimension_menos_conectada]:.2f}`). "
+        f"Esto no implica por sí mismo bajo desempeño; indica que sus resultados "
+        f"varían de manera más independiente respecto a las otras dimensiones."
+    )
+
+    diagnostico.append(
+        f"**Promedios generales.** La dimensión con mejor promedio es "
+        f"**{dimension_mas_alta}** ({valor_mas_alto:.1f}%), mientras que "
+        f"la dimensión con menor promedio es **{dimension_mas_baja}** "
+        f"({valor_mas_bajo:.1f}%). Esta última puede considerarse un área "
+        f"prioritaria de fortalecimiento."
+    )
+
+    return diagnostico
+
+
+def mostrar_red_correlacion(
+    df_bloque,
+    areas_detectadas,
+    nombre_bloque,
+    umbral=0.30
+):
+    """
+    Muestra una red de correlación Spearman.
+
+    Solo se dibujan relaciones con |rho| mayor o igual al umbral.
+    """
+
+    correlacion, _ = crear_matriz_correlacion(
+        df_bloque,
+        areas_detectadas
+    )
+
+    if correlacion.empty:
+        st.info(
+            "No hay suficientes datos para construir la red de correlación."
+        )
+        return
+
+    codigos_disponibles = [
+        columna.replace("Area_", "")
+        for columna in correlacion.columns
+    ]
+
+    etiquetas = [
+        ETIQUETAS_AREAS.get(codigo, codigo)
+        for codigo in codigos_disponibles
+    ]
+
+    total_nodos = len(etiquetas)
+
+    posiciones = {}
+
+    for indice, etiqueta in enumerate(etiquetas):
+        angulo = (
+            2 * math.pi * indice / total_nodos
+        )
+
+        posiciones[etiqueta] = (
+            math.cos(angulo),
+            math.sin(angulo)
+        )
+
+    correlacion.index = etiquetas
+    correlacion.columns = etiquetas
+
+    fig = go.Figure()
+
+    for i in range(total_nodos):
+        for j in range(i + 1, total_nodos):
+            nodo_1 = etiquetas[i]
+            nodo_2 = etiquetas[j]
+
+            rho = correlacion.loc[nodo_1, nodo_2]
+
+            if pd.isna(rho):
+                continue
+
+            if abs(rho) < umbral:
+                continue
+
+            x0, y0 = posiciones[nodo_1]
+            x1, y1 = posiciones[nodo_2]
+
+            color_linea = (
+                "#36A269"
+                if rho >= 0
+                else "#E45756"
+            )
+
+            grosor = 1 + abs(rho) * 7
+
+            fig.add_trace(
+                go.Scatter(
+                    x=[x0, x1],
+                    y=[y0, y1],
+                    mode="lines",
+                    line=dict(
+                        color=color_linea,
+                        width=grosor
+                    ),
+                    hoverinfo="text",
+                    text=(
+                        f"{nodo_1} ↔ {nodo_2}<br>"
+                        f"ρ de Spearman: {rho:.2f}"
+                    ),
+                    showlegend=False
+                )
+            )
+
+    x_nodos = []
+    y_nodos = []
+    texto_nodos = []
+    hover_nodos = []
+    colores_nodos = []
+
+    for indice, etiqueta in enumerate(etiquetas):
+        x, y = posiciones[etiqueta]
+
+        relaciones = correlacion.loc[
+            etiqueta
+        ].drop(
+            labels=[etiqueta],
+            errors="ignore"
+        ).dropna()
+
+        conectividad = relaciones.abs().mean()
+
+        x_nodos.append(x)
+        y_nodos.append(y)
+        texto_nodos.append(etiqueta)
+        colores_nodos.append(
+            COLORES_NODOS[indice % len(COLORES_NODOS)]
+        )
+
+        hover_nodos.append(
+            f"<b>{etiqueta}</b><br>"
+            f"Relación promedio con otras dimensiones: "
+            f"{conectividad:.2f}"
+        )
+
+    fig.add_trace(
+        go.Scatter(
+            x=x_nodos,
+            y=y_nodos,
+            mode="markers+text",
+            text=texto_nodos,
+            textposition="middle center",
+            textfont=dict(
+                color="white",
+                size=12
+            ),
+            hovertext=hover_nodos,
+            hoverinfo="text",
+            marker=dict(
+                size=58,
+                color=colores_nodos,
+                line=dict(
+                    color="white",
+                    width=1.5
+                )
+            ),
+            showlegend=False
+        )
+    )
+
+    fig.update_layout(
+        title=(
+            f"Red de correlación entre dimensiones · {nombre_bloque}"
+        ),
+        template="plotly_dark",
+        height=650,
+        margin=dict(
+            t=80,
+            b=30,
+            l=30,
+            r=30
+        ),
+        xaxis=dict(
+            visible=False,
+            range=[-1.35, 1.35]
+        ),
+        yaxis=dict(
+            visible=False,
+            range=[-1.35, 1.35],
+            scaleanchor="x",
+            scaleratio=1
+        ),
+        annotations=[
+            dict(
+                text=(
+                    "Verde: correlación positiva | "
+                    "Rojo: correlación inversa | "
+                    f"Se muestran relaciones con |ρ| ≥ {umbral:.2f}"
+                ),
+                x=0.5,
+                y=-0.10,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=13)
+            )
+        ]
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+
+# ============================================================
+# GRÁFICAS: RADAR
 # ============================================================
 
 def mostrar_radar_comparativo(
@@ -588,7 +1012,7 @@ def mostrar_radar_comparativo(
     nombre_bloque,
     mapa_colores_carreras
 ):
-    """Muestra solo un radar comparativo por bloque."""
+    """Muestra un radar comparativo por bloque académico."""
 
     promedios = crear_promedios_por_carrera(
         df_bloque,
@@ -702,11 +1126,15 @@ def mostrar_radar_comparativo(
     )
 
 
+# ============================================================
+# GRÁFICAS: SEMÁFORO
+# ============================================================
+
 def mostrar_semaforo_desempeno(
     df_bloque,
     nombre_bloque
 ):
-    """Muestra semáforo de desempeño global por carrera."""
+    """Muestra semáforo de calificación global por carrera."""
 
     tabla = crear_distribucion_desempeno(df_bloque)
 
@@ -824,7 +1252,9 @@ errores = []
 
 for archivo in archivos_subidos:
     try:
-        df_archivo, areas_detectadas = procesar_archivo(archivo)
+        df_archivo, areas_detectadas = procesar_archivo(
+            archivo
+        )
 
         bloque = df_archivo["Bloque"].iloc[0]
 
@@ -837,7 +1267,9 @@ for archivo in archivos_subidos:
         bases.append(df_archivo)
 
     except Exception as error:
-        errores.append(f"{archivo.name}: {error}")
+        errores.append(
+            f"{archivo.name}: {error}"
+        )
 
 if errores:
     for error in errores:
@@ -864,14 +1296,15 @@ bloques_disponibles = [
 
 
 # ============================================================
-# NAVEGACIÓN PRINCIPAL
+# NAVEGACIÓN
 # ============================================================
 
 seccion = st.radio(
     "Sección",
     [
         "📊 Promedio de dimensiones",
-        "🚦 Semáforo EVALUATEC 2026"
+        "🚦 Semáforo EVALUATEC 2026",
+        "🕸️ Relación entre dimensiones"
     ],
     horizontal=True,
     label_visibility="collapsed"
@@ -879,7 +1312,7 @@ seccion = st.radio(
 
 
 # ============================================================
-# PESTAÑA 1: RADAR
+# SECCIÓN 1: RADAR
 # ============================================================
 
 if seccion == "📊 Promedio de dimensiones":
@@ -909,7 +1342,7 @@ if seccion == "📊 Promedio de dimensiones":
 
 
 # ============================================================
-# PESTAÑA 2: SEMÁFORO
+# SECCIÓN 2: SEMÁFORO
 # ============================================================
 
 elif seccion == "🚦 Semáforo EVALUATEC 2026":
@@ -934,3 +1367,56 @@ elif seccion == "🚦 Semáforo EVALUATEC 2026":
         df_bloque=informacion["df"],
         nombre_bloque=BLOQUES[bloque_seleccionado]
     )
+
+
+# ============================================================
+# SECCIÓN 3: RED DE CORRELACIÓN
+# ============================================================
+
+elif seccion == "🕸️ Relación entre dimensiones":
+
+    st.subheader("Relación entre dimensiones evaluadas")
+
+    bloque_seleccionado = st.radio(
+        "Selecciona el bloque académico",
+        options=bloques_disponibles,
+        format_func=lambda codigo: f"{codigo} · {BLOQUES[codigo]}",
+        horizontal=True,
+        key="bloque_correlacion"
+    )
+
+    informacion = datos_por_bloque[bloque_seleccionado]
+
+    umbral_correlacion = st.slider(
+        "Nivel mínimo de correlación para mostrar una conexión",
+        min_value=0.10,
+        max_value=0.80,
+        value=0.30,
+        step=0.05,
+        help=(
+            "Un umbral mayor muestra menos conexiones y facilita "
+            "la lectura de relaciones fuertes."
+        )
+    )
+
+    st.caption(
+        f"Archivo: {informacion['archivo']} · "
+        "Correlación de Spearman con aspirantes que iniciaron la evaluación."
+    )
+
+    mostrar_red_correlacion(
+        df_bloque=informacion["df"],
+        areas_detectadas=informacion["areas"],
+        nombre_bloque=BLOQUES[bloque_seleccionado],
+        umbral=umbral_correlacion
+    )
+
+    st.markdown("### Diagnóstico automático")
+
+    diagnostico = crear_diagnostico_correlacion(
+        df_bloque=informacion["df"],
+        areas_detectadas=informacion["areas"]
+    )
+
+    for texto in diagnostico:
+        st.markdown(f"- {texto}")
