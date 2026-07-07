@@ -3,6 +3,7 @@ import re
 import unicodedata
 
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -19,7 +20,7 @@ st.set_page_config(
 
 st.title("📘 Resultados EVALUATEC")
 st.caption(
-    "Concentrado de participación y desempeño promedio por carrera."
+    "Participación y desempeño promedio de aspirantes por bloque académico."
 )
 
 
@@ -28,14 +29,14 @@ st.caption(
 # ============================================================
 
 ETIQUETAS_AREAS = {
-    "ING": "ING · Inglés",
-    "MAT": "MAT · Matemáticas",
-    "COM": "COM · Comprensión lectora",
-    "RLM": "RLM · Razonamiento lógico-matemático",
-    "PM": "PM · Pensamiento matemático",
-    "ARQ": "ARQ · Arquitectura",
-    "FIS": "FIS · Física",
-    "ADMN": "ADMN · Administración"
+    "ING": "Inglés",
+    "MAT": "Matemáticas",
+    "COM": "Comprensión lectora",
+    "RLM": "Razonamiento lógico-matemático",
+    "PM": "Pensamiento matemático",
+    "ARQ": "Arquitectura",
+    "FIS": "Física",
+    "ADMN": "Administración"
 }
 
 ORDEN_AREAS = [
@@ -47,6 +48,12 @@ ORDEN_AREAS = [
     "FIS",
     "ARQ",
     "ADMN"
+]
+
+ORDEN_BLOQUES = [
+    "Administración",
+    "Arquitectura",
+    "Ingeniería"
 ]
 
 
@@ -61,8 +68,8 @@ def normalizar_texto(valor):
         return ""
 
     texto = str(valor).strip().lower()
-    texto = unicodedata.normalize("NFD", texto)
 
+    texto = unicodedata.normalize("NFD", texto)
     texto = "".join(
         caracter
         for caracter in texto
@@ -73,7 +80,7 @@ def normalizar_texto(valor):
 
 
 def limpiar_nombre_carrera(valor):
-    """Limpia espacios y unifica visualmente el nombre de carrera."""
+    """Limpia espacios en el nombre de carrera."""
 
     if pd.isna(valor):
         return "Sin carrera especificada"
@@ -99,7 +106,7 @@ def encontrar_columna(df, posibles_nombres):
 
 
 def leer_csv_archivo(archivo):
-    """Lee CSV intentando codificaciones frecuentes."""
+    """Lee un CSV intentando codificaciones y separadores frecuentes."""
 
     contenido = archivo.getvalue()
 
@@ -112,7 +119,8 @@ def leer_csv_archivo(archivo):
 
     separadores = [
         ",",
-        ";"
+        ";",
+        "\t"
     ]
 
     for codificacion in codificaciones:
@@ -127,8 +135,6 @@ def leer_csv_archivo(archivo):
                 if len(df.columns) > 1:
                     return df
 
-            except UnicodeDecodeError:
-                continue
             except Exception:
                 continue
 
@@ -139,7 +145,7 @@ def leer_csv_archivo(archivo):
 
 
 def identificar_bloque_archivo(nombre_archivo):
-    """Obtiene el bloque académico desde el nombre del archivo."""
+    """Identifica el bloque académico desde el nombre del archivo."""
 
     nombre = normalizar_texto(nombre_archivo)
 
@@ -155,10 +161,53 @@ def identificar_bloque_archivo(nombre_archivo):
     return nombre_archivo
 
 
+def clasificar_inicio(valor):
+    """
+    Clasifica si la persona inició el examen.
+
+    Considera como no iniciado:
+    vacío, no, falso, 0, no iniciado, pendiente, etc.
+    Cualquier fecha, hora o valor positivo se considera iniciado.
+    """
+
+    if pd.isna(valor):
+        return "No inició"
+
+    texto = normalizar_texto(valor)
+
+    valores_no_inicio = [
+        "",
+        "no",
+        "n",
+        "false",
+        "falso",
+        "0",
+        "no inicio",
+        "no iniciado",
+        "pendiente",
+        "null",
+        "nan",
+        "none"
+    ]
+
+    if texto in valores_no_inicio:
+        return "No inició"
+
+    if "no inicio" in texto:
+        return "No inició"
+
+    return "Inició"
+
+
 def convertir_porcentaje(valor):
     """
-    Convierte valores de porcentaje a número entre 0 y 100.
-    Soporta texto como 75%, 75.5, 0.75 o campos vacíos.
+    Convierte valores a porcentaje 0-100.
+
+    Acepta formatos como:
+    75
+    75.5
+    75%
+    0.75
     """
 
     if pd.isna(valor):
@@ -186,24 +235,38 @@ def convertir_porcentaje(valor):
     return None
 
 
+def hex_a_rgba(color_hex, alpha=0.18):
+    """Convierte color hexadecimal a rgba para rellenos semitransparentes."""
+
+    color_hex = color_hex.lstrip("#")
+
+    if len(color_hex) != 6:
+        return f"rgba(120, 120, 120, {alpha})"
+
+    rojo = int(color_hex[0:2], 16)
+    verde = int(color_hex[2:4], 16)
+    azul = int(color_hex[4:6], 16)
+
+    return f"rgba({rojo}, {verde}, {azul}, {alpha})"
+
+
 # ============================================================
 # DETECCIÓN DE ÁREAS
 # ============================================================
 
 def detectar_columnas_areas(df):
     """
-    Detecta columnas tipo:
-    AreaGRALSeccionMATPorcentajeCorrectas
+    Detecta encabezados de áreas como:
+
     AreaGRALSeccionINGPorcentajeCorrectas
+    AreaGRALSeccionMATPorcentajeCorrectas
+    AreaGRALSeccionCOMPorcentajeCorrectas
     """
 
     areas_detectadas = {}
 
     for columna in df.columns:
         columna_normalizada = normalizar_texto(columna)
-
-        if not columna_normalizada.startswith("areagral"):
-            continue
 
         if "seccion" not in columna_normalizada:
             continue
@@ -212,7 +275,7 @@ def detectar_columnas_areas(df):
             continue
 
         coincidencia = re.search(
-            r"seccion([a-z]+)porcentajecorrectas",
+            r"seccion([a-z0-9]+?)porcentajecorrectas",
             columna_normalizada
         )
 
@@ -234,21 +297,17 @@ def detectar_columnas_areas(df):
 
 
 # ============================================================
-# PROCESAMIENTO
+# PROCESAMIENTO DE ARCHIVOS
 # ============================================================
 
 def procesar_archivo(archivo):
-    """
-    Lee un archivo, identifica carrera, inicio de examen y áreas.
-    """
+    """Lee y prepara un archivo EVALUATEC."""
 
     df = leer_csv_archivo(archivo)
 
     columna_carrera = encontrar_columna(
         df,
-        [
-            "Carrera"
-        ]
+        ["Carrera"]
     )
 
     columna_inicio = encontrar_columna(
@@ -275,7 +334,8 @@ def procesar_archivo(archivo):
 
     if not areas_detectadas:
         raise ValueError(
-            f"El archivo {archivo.name} no contiene áreas de evaluación detectables."
+            f"No se detectaron columnas Area...PorcentajeCorrectas "
+            f"en {archivo.name}."
         )
 
     df["Archivo_origen"] = archivo.name
@@ -287,16 +347,8 @@ def procesar_archivo(archivo):
         limpiar_nombre_carrera
     )
 
-    df["Inicio_normalizado"] = df[columna_inicio].apply(
-        normalizar_texto
-    )
-
-    df["Estatus_inicio"] = df["Inicio_normalizado"].apply(
-        lambda valor: (
-            "Inició"
-            if valor in ["si", "sí", "s", "1", "true"]
-            else "No inició"
-        )
+    df["Estatus_inicio"] = df[columna_inicio].apply(
+        clasificar_inicio
     )
 
     for codigo, columna in areas_detectadas.items():
@@ -307,62 +359,23 @@ def procesar_archivo(archivo):
     return df, areas_detectadas
 
 
-def crear_resumen_inicio(df):
-    """Genera concentración de participantes por carrera e inicio."""
-
-    resumen = (
-        df
-        .groupby(
-            [
-                "Carrera_normalizada",
-                "Estatus_inicio"
-            ]
-        )
-        .size()
-        .unstack(fill_value=0)
-        .reset_index()
-    )
-
-    if "Inició" not in resumen.columns:
-        resumen["Inició"] = 0
-
-    if "No inició" not in resumen.columns:
-        resumen["No inició"] = 0
-
-    resumen["Participantes"] = (
-        resumen["Inició"]
-        + resumen["No inició"]
-    )
-
-    resumen["% inició"] = (
-        resumen["Inició"]
-        / resumen["Participantes"]
-        * 100
-    ).round(1)
-
-    return resumen.sort_values(
-        "Participantes",
-        ascending=False
-    ).reset_index(drop=True)
-
-
-def crear_promedios_radar(df, areas_detectadas):
+def crear_promedios_por_carrera(df, areas_detectadas):
     """
-    Calcula el promedio por área para cada carrera,
-    usando únicamente participantes que iniciaron examen.
+    Calcula promedios por carrera usando solamente
+    aspirantes que iniciaron la evaluación.
     """
 
     df_iniciaron = df[
         df["Estatus_inicio"] == "Inició"
     ].copy()
 
+    if df_iniciaron.empty:
+        return pd.DataFrame()
+
     columnas_areas = [
         f"Area_{codigo}"
         for codigo in areas_detectadas.keys()
     ]
-
-    if df_iniciaron.empty:
-        return pd.DataFrame()
 
     promedios = (
         df_iniciaron
@@ -384,75 +397,150 @@ def crear_promedios_radar(df, areas_detectadas):
         how="left"
     )
 
-    return promedios
+    return promedios.sort_values(
+        "Participantes_iniciaron",
+        ascending=False
+    ).reset_index(drop=True)
+
+
+def crear_mapa_colores_carreras(df_general):
+    """Asigna colores fijos por carrera para todos los radares."""
+
+    paleta = (
+        px.colors.qualitative.Alphabet
+        + px.colors.qualitative.Dark24
+        + px.colors.qualitative.Bold
+        + px.colors.qualitative.Set3
+    )
+
+    carreras = sorted(
+        df_general["Carrera_normalizada"]
+        .dropna()
+        .astype(str)
+        .unique()
+    )
+
+    return {
+        carrera: paleta[indice % len(paleta)]
+        for indice, carrera in enumerate(carreras)
+    }
 
 
 # ============================================================
 # GRÁFICAS
 # ============================================================
 
-def mostrar_radar_carrera(
-    fila_carrera,
+def mostrar_radar_comparativo(
+    df_bloque,
     areas_detectadas,
-    titulo
+    nombre_bloque,
+    mapa_colores_carreras
 ):
-    """Genera radar de desempeño promedio para una carrera."""
+    """
+    Muestra un solo radar por archivo.
+
+    Cada carrera se representa con una línea y color diferente.
+    """
+
+    promedios = crear_promedios_por_carrera(
+        df_bloque,
+        areas_detectadas
+    )
+
+    if promedios.empty:
+        st.info(
+            f"No hay aspirantes que hayan iniciado el examen en {nombre_bloque}."
+        )
+        return
 
     codigos_areas = list(areas_detectadas.keys())
 
     etiquetas = [
-        ETIQUETAS_AREAS.get(
-            codigo,
-            codigo
-        )
+        ETIQUETAS_AREAS.get(codigo, codigo)
         for codigo in codigos_areas
     ]
 
-    valores = []
-
-    for codigo in codigos_areas:
-        valor = fila_carrera.get(f"Area_{codigo}")
-
-        if pd.isna(valor):
-            valor = 0
-
-        valores.append(round(float(valor), 1))
-
     etiquetas_cerradas = etiquetas + [etiquetas[0]]
-    valores_cerrados = valores + [valores[0]]
 
     fig = go.Figure()
 
-    fig.add_trace(
-        go.Scatterpolar(
-            r=valores_cerrados,
-            theta=etiquetas_cerradas,
-            fill="toself",
-            name="Promedio",
-            hovertemplate=(
-                "<b>%{theta}</b><br>"
-                "Promedio: %{r:.1f}%"
-                "<extra></extra>"
+    for _, fila in promedios.iterrows():
+        carrera = fila["Carrera_normalizada"]
+        participantes = int(fila["Participantes_iniciaron"])
+
+        valores = []
+
+        for codigo in codigos_areas:
+            valor = fila.get(f"Area_{codigo}")
+
+            if pd.isna(valor):
+                valor = 0
+
+            valores.append(round(float(valor), 1))
+
+        valores_cerrados = valores + [valores[0]]
+
+        color = mapa_colores_carreras.get(
+            carrera,
+            "#808080"
+        )
+
+        fig.add_trace(
+            go.Scatterpolar(
+                r=valores_cerrados,
+                theta=etiquetas_cerradas,
+                mode="lines+markers",
+                name=f"{carrera} · n={participantes}",
+                line=dict(
+                    color=color,
+                    width=3
+                ),
+                marker=dict(
+                    color=color,
+                    size=7
+                ),
+                fill="toself",
+                fillcolor=hex_a_rgba(
+                    color,
+                    alpha=0.12
+                ),
+                hovertemplate=(
+                    "<b>%{fullData.name}</b><br>"
+                    "%{theta}: %{r:.1f}%"
+                    "<extra></extra>"
+                )
             )
         )
-    )
 
     fig.update_layout(
-        title=titulo,
+        title=f"Desempeño promedio por carrera · {nombre_bloque}",
+        template="plotly_dark",
         polar=dict(
+            bgcolor="rgba(0,0,0,0)",
             radialaxis=dict(
                 visible=True,
                 range=[0, 100],
-                ticksuffix="%"
+                ticksuffix="%",
+                gridcolor="rgba(190,190,190,0.45)",
+                linecolor="rgba(190,190,190,0.45)"
+            ),
+            angularaxis=dict(
+                gridcolor="rgba(190,190,190,0.45)",
+                linecolor="rgba(190,190,190,0.45)"
             )
         ),
-        showlegend=False,
-        height=440,
+        legend=dict(
+            title="Carreras",
+            orientation="v",
+            x=1.05,
+            y=1
+        ),
+        height=650,
         margin=dict(
-            t=70,
+            t=80,
             b=35,
-            l=45,
-            r=45
+            l=50,
+            r=260
         )
     )
 
@@ -461,51 +549,46 @@ def mostrar_radar_carrera(
         use_container_width=True
     )
 
-
-def mostrar_radares_bloque(
-    df_bloque,
-    areas_detectadas,
-    nombre_bloque
-):
-    """Muestra un radar por carrera dentro de cada archivo."""
-
-    promedios = crear_promedios_radar(
-        df_bloque,
-        areas_detectadas
-    )
-
-    if promedios.empty:
-        st.info(
-            f"No hay participantes que hayan iniciado la evaluación en {nombre_bloque}."
-        )
-        return
-
-    carreras = promedios.sort_values(
-        "Participantes_iniciaron",
-        ascending=False
-    ).reset_index(drop=True)
-
-    columnas = st.columns(2)
-
-    for indice, (_, fila) in enumerate(carreras.iterrows()):
-        carrera = fila["Carrera_normalizada"]
-        participantes = int(fila["Participantes_iniciaron"])
-
-        with columnas[indice % 2]:
-            mostrar_radar_carrera(
-                fila,
-                areas_detectadas,
-                f"{carrera} · n={participantes}"
-            )
-
-    etiquetas = [
-        ETIQUETAS_AREAS.get(codigo, codigo)
-        for codigo in areas_detectadas.keys()
-    ]
-
     st.caption(
-        "Dimensiones evaluadas: " + " | ".join(etiquetas)
+        "Puedes seleccionar una carrera en la leyenda para ocultarla o mostrarla."
     )
+
+
+# ============================================================
+# RESÚMENES VISUALES
+# ============================================================
+
+def mostrar_resumen_bloque(df_bloque, nombre_bloque):
+    """Muestra indicadores generales del bloque."""
+
+    participantes = len(df_bloque)
+
+    iniciaron = (
+        df_bloque["Estatus_inicio"] == "Inició"
+    ).sum()
+
+    no_iniciaron = (
+        df_bloque["Estatus_inicio"] == "No inició"
+    ).sum()
+
+    carreras = df_bloque[
+        "Carrera_normalizada"
+    ].nunique()
+
+    porcentaje_inicio = (
+        iniciaron / participantes * 100
+        if participantes > 0
+        else 0
+    )
+
+    st.markdown(f"### {nombre_bloque}")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Participantes", f"{participantes:,}")
+    col2.metric("Carreras", f"{carreras:,}")
+    col3.metric("Iniciaron", f"{iniciaron:,}")
+    col4.metric("% de inicio", f"{porcentaje_inicio:.1f}%")
 
 
 # ============================================================
@@ -535,7 +618,7 @@ if len(archivos_subidos) != 3:
 
 
 # ============================================================
-# PROCESAMIENTO DE ARCHIVOS
+# LECTURA E INTEGRACIÓN
 # ============================================================
 
 bases = []
@@ -576,6 +659,10 @@ df_general = pd.concat(
     sort=False
 )
 
+mapa_colores_carreras = crear_mapa_colores_carreras(
+    df_general
+)
+
 
 # ============================================================
 # RESUMEN GENERAL
@@ -584,6 +671,7 @@ df_general = pd.concat(
 st.subheader("Resumen general")
 
 total_participantes = len(df_general)
+
 total_iniciaron = (
     df_general["Estatus_inicio"] == "Inició"
 ).sum()
@@ -605,70 +693,41 @@ col4.metric("No iniciaron", f"{total_no_iniciaron:,}")
 
 
 # ============================================================
-# RESUMEN DE INICIO POR BLOQUE
+# PARTICIPACIÓN POR BLOQUE
 # ============================================================
 
 st.markdown("## Participación por bloque académico")
 
-bloques_ordenados = [
-    "Administración",
-    "Arquitectura",
-    "Ingeniería"
-]
-
 bloques_disponibles = [
     bloque
-    for bloque in bloques_ordenados
+    for bloque in ORDEN_BLOQUES
     if bloque in datos_por_bloque
 ]
 
 for bloque in bloques_disponibles:
-    df_bloque = datos_por_bloque[bloque]["df"]
-
-    participantes = len(df_bloque)
-    iniciaron = (
-        df_bloque["Estatus_inicio"] == "Inició"
-    ).sum()
-
-    no_iniciaron = (
-        df_bloque["Estatus_inicio"] == "No inició"
-    ).sum()
-
-    porcentaje_inicio = (
-        iniciaron / participantes * 100
-        if participantes > 0
-        else 0
-    )
-
-    st.markdown(f"### {bloque}")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric("Participantes", f"{participantes:,}")
-    col2.metric("Carreras", f"{df_bloque['Carrera_normalizada'].nunique():,}")
-    col3.metric("Iniciaron", f"{iniciaron:,}")
-    col4.metric(
-        "% de inicio",
-        f"{porcentaje_inicio:.1f}%"
+    mostrar_resumen_bloque(
+        datos_por_bloque[bloque]["df"],
+        bloque
     )
 
 
 # ============================================================
-# RADARES POR ARCHIVO Y CARRERA
+# RADARES COMPARATIVOS
 # ============================================================
 
-st.markdown("## Desempeño promedio por carrera")
+st.markdown("## Comparativo de desempeño por carrera")
 
 for bloque in bloques_disponibles:
-    df_bloque = datos_por_bloque[bloque]["df"]
-    areas_detectadas = datos_por_bloque[bloque]["areas"]
-    archivo_origen = datos_por_bloque[bloque]["archivo"]
+    informacion_bloque = datos_por_bloque[bloque]
 
-    st.markdown(f"# {bloque}")
-    st.caption(f"Archivo: {archivo_origen}")
+    st.markdown(f"## {bloque}")
+    st.caption(
+        f"Archivo analizado: {informacion_bloque['archivo']}"
+    )
 
-    mostrar_radares_bloque(
-        df_bloque,
-        areas_detectadas,
-        bloque
+    mostrar_radar_comparativo(
+        df_bloque=informacion_bloque["df"],
+        areas_detectadas=informacion_bloque["areas"],
+        nombre_bloque=bloque,
+        mapa_colores_carreras=mapa_colores_carreras
     )
