@@ -13,14 +13,14 @@ import streamlit as st
 # ============================================================
 
 st.set_page_config(
-    page_title="EVALUATEC | Resultados",
+    page_title="EVALUATEC 2026",
     page_icon="📘",
     layout="wide"
 )
 
-st.title("📘 Resultados EVALUATEC")
+st.title("📘 Resultados EVALUATEC 2026")
 st.caption(
-    "Participación y desempeño promedio de aspirantes por bloque académico."
+    "Comparativo de desempeño por bloque académico y carrera."
 )
 
 
@@ -50,11 +50,11 @@ ORDEN_AREAS = [
     "ADMN"
 ]
 
-ORDEN_BLOQUES = [
-    "Administración",
-    "Arquitectura",
-    "Ingeniería"
-]
+BLOQUES = {
+    "ADM": "Administración",
+    "ARQ": "Arquitectura",
+    "ING": "Ingeniería"
+}
 
 ORDEN_NIVELES = [
     "Bajo",
@@ -76,14 +76,14 @@ COLORES_NIVELES = {
 # ============================================================
 
 def normalizar_texto(valor):
-    """Normaliza texto para comparar encabezados y respuestas."""
+    """Normaliza texto para comparaciones."""
 
     if pd.isna(valor):
         return ""
 
     texto = str(valor).strip().lower()
-
     texto = unicodedata.normalize("NFD", texto)
+
     texto = "".join(
         caracter
         for caracter in texto
@@ -94,7 +94,7 @@ def normalizar_texto(valor):
 
 
 def limpiar_nombre_carrera(valor):
-    """Limpia espacios repetidos en el nombre de carrera."""
+    """Limpia espacios repetidos del nombre de carrera."""
 
     if pd.isna(valor):
         return "Sin carrera especificada"
@@ -103,7 +103,7 @@ def limpiar_nombre_carrera(valor):
 
 
 def encontrar_columna(df, posibles_nombres):
-    """Encuentra una columna sin importar acentos, espacios o mayúsculas."""
+    """Encuentra una columna ignorando acentos, espacios y mayúsculas."""
 
     columnas_normalizadas = {
         normalizar_texto(columna): columna
@@ -120,7 +120,7 @@ def encontrar_columna(df, posibles_nombres):
 
 
 def leer_csv_archivo(archivo):
-    """Lee CSV intentando codificaciones y separadores frecuentes."""
+    """Lee un archivo CSV intentando formatos frecuentes."""
 
     contenido = archivo.getvalue()
 
@@ -159,24 +159,24 @@ def leer_csv_archivo(archivo):
 
 
 def identificar_bloque_archivo(nombre_archivo):
-    """Identifica el bloque académico desde el nombre del archivo."""
+    """Identifica ADM, ARQ o ING desde el nombre del archivo."""
 
     nombre = normalizar_texto(nombre_archivo)
 
     if "administracion" in nombre:
-        return "Administración"
+        return "ADM"
 
     if "arquitectura" in nombre:
-        return "Arquitectura"
+        return "ARQ"
 
     if "ingenieria" in nombre:
-        return "Ingeniería"
+        return "ING"
 
-    return nombre_archivo
+    return None
 
 
 def clasificar_inicio(valor):
-    """Clasifica si una persona inició o no su evaluación."""
+    """Clasifica si el aspirante inició la evaluación."""
 
     if pd.isna(valor):
         return "No inició"
@@ -208,15 +208,7 @@ def clasificar_inicio(valor):
 
 
 def convertir_porcentaje(valor):
-    """
-    Convierte valores a porcentaje de 0 a 100.
-
-    Acepta:
-    75
-    75.5
-    75%
-    0.75
-    """
+    """Convierte datos a una escala de 0 a 100."""
 
     if pd.isna(valor):
         return None
@@ -243,8 +235,8 @@ def convertir_porcentaje(valor):
     return None
 
 
-def hex_a_rgba(color_hex, alpha=0.14):
-    """Convierte hexadecimal a rgba para rellenos transparentes."""
+def hex_a_rgba(color_hex, alpha=0.12):
+    """Convierte un color hexadecimal a rgba."""
 
     color_hex = color_hex.lstrip("#")
 
@@ -265,10 +257,8 @@ def hex_a_rgba(color_hex, alpha=0.14):
 def detectar_columnas_areas(df):
     """
     Detecta columnas como:
-
     AreaGRALSeccionINGPorcentajeCorrectas
     AreaGRALSeccionMATPorcentajeCorrectas
-    AreaGRALSeccionCOMPorcentajeCorrectas
     """
 
     areas_detectadas = {}
@@ -305,13 +295,21 @@ def detectar_columnas_areas(df):
 
 
 # ============================================================
-# PROCESAMIENTO
+# PROCESAMIENTO DE ARCHIVOS
 # ============================================================
 
 def procesar_archivo(archivo):
-    """Lee y procesa un archivo CSV de EVALUATEC."""
+    """Lee y prepara un archivo de resultados EVALUATEC."""
 
     df = leer_csv_archivo(archivo)
+
+    bloque = identificar_bloque_archivo(archivo.name)
+
+    if bloque is None:
+        raise ValueError(
+            "No se identificó el bloque. "
+            "El archivo debe contener Administración, Arquitectura o Ingeniería."
+        )
 
     columna_carrera = encontrar_columna(
         df,
@@ -330,25 +328,23 @@ def procesar_archivo(archivo):
 
     if columna_carrera is None:
         raise ValueError(
-            f"El archivo {archivo.name} no contiene la columna Carrera."
+            f"{archivo.name}: no se encontró la columna Carrera."
         )
 
     if columna_inicio is None:
         raise ValueError(
-            f"El archivo {archivo.name} no contiene la columna InicioExamen."
+            f"{archivo.name}: no se encontró la columna InicioExamen."
         )
 
     areas_detectadas = detectar_columnas_areas(df)
 
     if not areas_detectadas:
         raise ValueError(
-            f"No se detectaron columnas de áreas evaluadas en {archivo.name}."
+            f"{archivo.name}: no se detectaron áreas de evaluación."
         )
 
     df["Archivo_origen"] = archivo.name
-    df["Bloque_academico"] = identificar_bloque_archivo(
-        archivo.name
-    )
+    df["Bloque"] = bloque
 
     df["Carrera_normalizada"] = df[columna_carrera].apply(
         limpiar_nombre_carrera
@@ -375,11 +371,31 @@ def procesar_archivo(archivo):
     return df, areas_detectadas
 
 
+def crear_mapa_colores_carreras(df):
+    """Asigna colores distintos y consistentes a cada carrera."""
+
+    paleta = (
+        px.colors.qualitative.Alphabet
+        + px.colors.qualitative.Dark24
+        + px.colors.qualitative.Bold
+        + px.colors.qualitative.Set3
+    )
+
+    carreras = sorted(
+        df["Carrera_normalizada"]
+        .dropna()
+        .astype(str)
+        .unique()
+    )
+
+    return {
+        carrera: paleta[indice % len(paleta)]
+        for indice, carrera in enumerate(carreras)
+    }
+
+
 def crear_promedios_por_carrera(df, areas_detectadas):
-    """
-    Calcula promedios por carrera usando solo
-    participantes que iniciaron la evaluación.
-    """
+    """Calcula promedio por dimensión para cada carrera."""
 
     df_iniciaron = df[
         df["Estatus_inicio"] == "Inició"
@@ -421,12 +437,12 @@ def crear_promedios_por_carrera(df, areas_detectadas):
 
 def clasificar_nivel_desempeno(valor):
     """
-    Clasifica el promedio global individual en bloques de 25%.
+    Clasifica el promedio individual en bloques de 25%.
 
-    Bajo: 0 a 24.99
-    Básico: 25 a 49.99
-    Satisfactorio: 50 a 74.99
-    Alto: 75 a 100
+    Bajo: 0–24%
+    Básico: 25–49%
+    Satisfactorio: 50–74%
+    Alto: 75–100%
     """
 
     if pd.isna(valor):
@@ -448,10 +464,7 @@ def clasificar_nivel_desempeno(valor):
 
 
 def crear_distribucion_desempeno(df):
-    """
-    Crea distribución porcentual de desempeño global
-    por carrera para las personas que iniciaron.
-    """
+    """Genera distribución del semáforo por carrera."""
 
     df_iniciaron = df[
         (
@@ -482,6 +495,7 @@ def crear_distribucion_desempeno(df):
         .groupby("Carrera_normalizada")
         .size()
         .reset_index(name="Total")
+        .sort_values("Total", ascending=False)
     )
 
     tabla = (
@@ -496,10 +510,7 @@ def crear_distribucion_desempeno(df):
         .reset_index(name="Aspirantes")
     )
 
-    carreras = sorted(
-        df_iniciaron["Carrera_normalizada"]
-        .unique()
-    )
+    carreras = totales["Carrera_normalizada"].tolist()
 
     combinaciones = pd.MultiIndex.from_product(
         [
@@ -547,24 +558,14 @@ def crear_distribucion_desempeno(df):
         axis=1
     )
 
-    orden_carreras = (
-        totales
-        .sort_values("Total", ascending=False)
-        ["Carrera_normalizada"]
-        .tolist()
-    )
-
-    etiquetas_carreras = [
-        f"{carrera} (n={int(totales.loc[
-            totales['Carrera_normalizada'] == carrera,
-            'Total'
-        ].iloc[0])})"
-        for carrera in orden_carreras
+    etiquetas_ordenadas = [
+        f"{fila['Carrera_normalizada']} (n={int(fila['Total'])})"
+        for _, fila in totales.iterrows()
     ]
 
     tabla["Carrera_etiqueta"] = pd.Categorical(
         tabla["Carrera_etiqueta"],
-        categories=etiquetas_carreras[::-1],
+        categories=etiquetas_ordenadas[::-1],
         ordered=True
     )
 
@@ -577,29 +578,6 @@ def crear_distribucion_desempeno(df):
     return tabla
 
 
-def crear_mapa_colores_carreras(df_general):
-    """Asigna un color fijo por carrera para los radares."""
-
-    paleta = (
-        px.colors.qualitative.Alphabet
-        + px.colors.qualitative.Dark24
-        + px.colors.qualitative.Bold
-        + px.colors.qualitative.Set3
-    )
-
-    carreras = sorted(
-        df_general["Carrera_normalizada"]
-        .dropna()
-        .astype(str)
-        .unique()
-    )
-
-    return {
-        carrera: paleta[indice % len(paleta)]
-        for indice, carrera in enumerate(carreras)
-    }
-
-
 # ============================================================
 # GRÁFICAS
 # ============================================================
@@ -610,7 +588,7 @@ def mostrar_radar_comparativo(
     nombre_bloque,
     mapa_colores_carreras
 ):
-    """Muestra un radar comparativo por archivo."""
+    """Muestra solo un radar comparativo por bloque."""
 
     promedios = crear_promedios_por_carrera(
         df_bloque,
@@ -619,7 +597,7 @@ def mostrar_radar_comparativo(
 
     if promedios.empty:
         st.info(
-            f"No hay participantes que hayan iniciado el examen en {nombre_bloque}."
+            f"No hay participantes que hayan iniciado la evaluación en {nombre_bloque}."
         )
         return
 
@@ -672,7 +650,7 @@ def mostrar_radar_comparativo(
                 fill="toself",
                 fillcolor=hex_a_rgba(
                     color,
-                    alpha=0.11
+                    alpha=0.10
                 ),
                 hovertemplate=(
                     "<b>%{fullData.name}</b><br>"
@@ -683,7 +661,7 @@ def mostrar_radar_comparativo(
         )
 
     fig.update_layout(
-        title=f"Desempeño promedio por carrera · {nombre_bloque}",
+        title=f"Promedio de dimensiones · {nombre_bloque}",
         template="plotly_dark",
         polar=dict(
             bgcolor="rgba(0,0,0,0)",
@@ -705,10 +683,10 @@ def mostrar_radar_comparativo(
             x=1.05,
             y=1
         ),
-        height=650,
+        height=680,
         margin=dict(
             t=80,
-            b=35,
+            b=40,
             l=50,
             r=260
         )
@@ -720,26 +698,28 @@ def mostrar_radar_comparativo(
     )
 
     st.caption(
-        "Puedes seleccionar una carrera en la leyenda para ocultarla o mostrarla."
+        "Selecciona una carrera en la leyenda para ocultarla o mostrarla."
     )
 
 
-def mostrar_barras_desempeno_global(
+def mostrar_semaforo_desempeno(
     df_bloque,
     nombre_bloque
 ):
-    """
-    Muestra barras apiladas al 100% por carrera,
-    usando bloques de desempeño de 25%.
-    """
+    """Muestra semáforo de desempeño global por carrera."""
 
     tabla = crear_distribucion_desempeno(df_bloque)
 
     if tabla.empty:
         st.info(
-            f"No hay datos suficientes para calcular desempeño global en {nombre_bloque}."
+            f"No hay datos suficientes para generar el semáforo en {nombre_bloque}."
         )
         return
+
+    altura = max(
+        470,
+        len(tabla["Carrera_etiqueta"].unique()) * 90
+    )
 
     fig = px.bar(
         tabla,
@@ -772,7 +752,7 @@ def mostrar_barras_desempeno_global(
     )
 
     fig.update_layout(
-        title=f"Distribución del desempeño global por carrera · {nombre_bloque}",
+        title=f"Semáforo de calificación obtenida · {nombre_bloque}",
         template="plotly_dark",
         legend_title_text="Nivel de desempeño",
         legend=dict(
@@ -788,12 +768,12 @@ def mostrar_barras_desempeno_global(
             ticksuffix="%"
         ),
         yaxis_title="",
-        height=max(450, len(tabla["Carrera_etiqueta"].unique()) * 85),
+        height=altura,
         margin=dict(
             t=100,
             b=45,
-            l=310,
-            r=30
+            l=330,
+            r=35
         )
     )
 
@@ -809,46 +789,13 @@ def mostrar_barras_desempeno_global(
 
 
 # ============================================================
-# RESÚMENES
-# ============================================================
-
-def mostrar_resumen_bloque(df_bloque, nombre_bloque):
-    """Muestra indicadores generales de cada bloque."""
-
-    participantes = len(df_bloque)
-
-    iniciaron = (
-        df_bloque["Estatus_inicio"] == "Inició"
-    ).sum()
-
-    carreras = df_bloque[
-        "Carrera_normalizada"
-    ].nunique()
-
-    porcentaje_inicio = (
-        iniciaron / participantes * 100
-        if participantes > 0
-        else 0
-    )
-
-    st.markdown(f"### {nombre_bloque}")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric("Participantes", f"{participantes:,}")
-    col2.metric("Carreras", f"{carreras:,}")
-    col3.metric("Iniciaron", f"{iniciaron:,}")
-    col4.metric("% de inicio", f"{porcentaje_inicio:.1f}%")
-
-
-# ============================================================
 # CARGA DE ARCHIVOS
 # ============================================================
 
 st.sidebar.header("Carga de archivos")
 
 archivos_subidos = st.sidebar.file_uploader(
-    "Carga los 3 archivos oficiales de EVALUATEC",
+    "Carga los 3 archivos oficiales EVALUATEC",
     type=["csv"],
     accept_multiple_files=True
 )
@@ -862,28 +809,24 @@ if not archivos_subidos:
 if len(archivos_subidos) != 3:
     st.warning(
         f"Actualmente cargaste {len(archivos_subidos)} archivo(s). "
-        "Para este módulo deben cargarse exactamente 3."
+        "Deben cargarse exactamente 3."
     )
     st.stop()
 
 
 # ============================================================
-# LECTURA E INTEGRACIÓN
+# PROCESAMIENTO
 # ============================================================
 
-bases = []
 datos_por_bloque = {}
+bases = []
 errores = []
 
 for archivo in archivos_subidos:
     try:
-        df_archivo, areas_detectadas = procesar_archivo(
-            archivo
-        )
+        df_archivo, areas_detectadas = procesar_archivo(archivo)
 
-        bloque = df_archivo["Bloque_academico"].iloc[0]
-
-        bases.append(df_archivo)
+        bloque = df_archivo["Bloque"].iloc[0]
 
         datos_por_bloque[bloque] = {
             "df": df_archivo,
@@ -891,10 +834,10 @@ for archivo in archivos_subidos:
             "archivo": archivo.name
         }
 
+        bases.append(df_archivo)
+
     except Exception as error:
-        errores.append(
-            f"{archivo.name}: {error}"
-        )
+        errores.append(f"{archivo.name}: {error}")
 
 if errores:
     for error in errores:
@@ -913,76 +856,81 @@ mapa_colores_carreras = crear_mapa_colores_carreras(
     df_general
 )
 
-
-# ============================================================
-# RESUMEN GENERAL
-# ============================================================
-
-st.subheader("Resumen general")
-
-total_participantes = len(df_general)
-
-total_iniciaron = (
-    df_general["Estatus_inicio"] == "Inició"
-).sum()
-
-total_no_iniciaron = (
-    df_general["Estatus_inicio"] == "No inició"
-).sum()
-
-total_carreras = df_general[
-    "Carrera_normalizada"
-].nunique()
-
-col1, col2, col3, col4 = st.columns(4)
-
-col1.metric("Participantes", f"{total_participantes:,}")
-col2.metric("Carreras detectadas", f"{total_carreras:,}")
-col3.metric("Iniciaron evaluación", f"{total_iniciaron:,}")
-col4.metric("No iniciaron", f"{total_no_iniciaron:,}")
-
-
-# ============================================================
-# PARTICIPACIÓN POR BLOQUE
-# ============================================================
-
-st.markdown("## Participación por bloque académico")
-
 bloques_disponibles = [
-    bloque
-    for bloque in ORDEN_BLOQUES
-    if bloque in datos_por_bloque
+    codigo
+    for codigo in BLOQUES
+    if codigo in datos_por_bloque
 ]
 
-for bloque in bloques_disponibles:
-    mostrar_resumen_bloque(
-        datos_por_bloque[bloque]["df"],
-        bloque
+
+# ============================================================
+# NAVEGACIÓN PRINCIPAL
+# ============================================================
+
+seccion = st.radio(
+    "Sección",
+    [
+        "📊 Promedio de dimensiones",
+        "🚦 Semáforo EVALUATEC 2026"
+    ],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+
+# ============================================================
+# PESTAÑA 1: RADAR
+# ============================================================
+
+if seccion == "📊 Promedio de dimensiones":
+
+    st.subheader("Promedio de dimensiones por carrera")
+
+    bloque_seleccionado = st.radio(
+        "Selecciona el bloque académico",
+        options=bloques_disponibles,
+        format_func=lambda codigo: f"{codigo} · {BLOQUES[codigo]}",
+        horizontal=True,
+        key="bloque_radar"
     )
 
+    informacion = datos_por_bloque[bloque_seleccionado]
 
-# ============================================================
-# RADARES Y BARRAS POR BLOQUE
-# ============================================================
-
-st.markdown("## Comparativo de desempeño por carrera")
-
-for bloque in bloques_disponibles:
-    informacion_bloque = datos_por_bloque[bloque]
-
-    st.markdown(f"# {bloque}")
     st.caption(
-        f"Archivo analizado: {informacion_bloque['archivo']}"
+        f"Archivo: {informacion['archivo']}"
     )
 
     mostrar_radar_comparativo(
-        df_bloque=informacion_bloque["df"],
-        areas_detectadas=informacion_bloque["areas"],
-        nombre_bloque=bloque,
+        df_bloque=informacion["df"],
+        areas_detectadas=informacion["areas"],
+        nombre_bloque=BLOQUES[bloque_seleccionado],
         mapa_colores_carreras=mapa_colores_carreras
     )
 
-    mostrar_barras_desempeno_global(
-        df_bloque=informacion_bloque["df"],
-        nombre_bloque=bloque
+
+# ============================================================
+# PESTAÑA 2: SEMÁFORO
+# ============================================================
+
+elif seccion == "🚦 Semáforo EVALUATEC 2026":
+
+    st.subheader("Semáforo de calificación obtenida en EVALUATEC 2026")
+
+    bloque_seleccionado = st.radio(
+        "Selecciona el bloque académico",
+        options=bloques_disponibles,
+        format_func=lambda codigo: f"{codigo} · {BLOQUES[codigo]}",
+        horizontal=True,
+        key="bloque_semaforo"
+    )
+
+    informacion = datos_por_bloque[bloque_seleccionado]
+
+    st.caption(
+        f"Archivo: {informacion['archivo']}"
+    )
+
+    mostrar_semaforo_desempeno(
+        df_bloque=informacion["df"],
+        nombre_bloque=BLOQUES[bloque_seleccionado]
     )
